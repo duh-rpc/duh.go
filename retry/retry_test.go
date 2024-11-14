@@ -64,8 +64,8 @@ func TestRetry(t *testing.T) {
 	c.Attempts = 10
 	var count int
 
-	t.Run("Twice", func(t *testing.T) {
-		err := retry.On(ctx, retry.Twice, func(ctx context.Context, attempt int) error {
+	t.Run("UntilAttempts", func(t *testing.T) {
+		err := retry.UntilAttempts(ctx, 2, time.Second, func(ctx context.Context, attempt int) error {
 			err := c.DoThing(ctx, &DoThingRequest{}, &resp)
 			if err != nil {
 				count++
@@ -81,9 +81,7 @@ func TestRetry(t *testing.T) {
 		c.Attempts = 5
 		count = 0
 
-		// The `retry.UntilSuccess` policy will retry on retryable errors until success, using the default
-		// back off policy.
-		_ = retry.On(ctx, retry.UntilSuccess, func(ctx context.Context, attempt int) error {
+		_ = retry.Until(ctx, func(ctx context.Context, attempt int) error {
 			err := c.DoThing(ctx, &DoThingRequest{}, &resp)
 			if err != nil {
 				count++
@@ -99,9 +97,9 @@ func TestRetry(t *testing.T) {
 		c.Attempts = 5
 		count = 0
 
-		// The `retry.OnRetryable` policy will retry only on 454 retry request or until success, using
+		// The `retry.PolicyOnRetryable` policy will retry only on 454 retry request or until success, using
 		// the default back off policy.
-		_ = retry.On(ctx, retry.OnRetryable, func(ctx context.Context, attempt int) error {
+		_ = retry.Do(ctx, retry.PolicyOnRetryable, func(ctx context.Context, attempt int) error {
 			err := c.DoThing(ctx, &DoThingRequest{}, &resp)
 			if err != nil {
 				count++
@@ -115,7 +113,7 @@ func TestRetry(t *testing.T) {
 	t.Run("CustomPolicyBackoff", func(t *testing.T) {
 		customPolicy := retry.Policy{
 			OnCodes: []int{duh.CodeConflict, duh.CodeTooManyRequests, 502, 503, 504},
-			Interval: retry.BackOff{
+			Interval: retry.IntervalBackOff{
 				Min:    time.Millisecond,
 				Max:    time.Millisecond * 100,
 				Factor: 2,
@@ -128,7 +126,7 @@ func TestRetry(t *testing.T) {
 		count = 0
 
 		// Users can define a custom retry policy to suit their needs
-		err := retry.On(ctx, customPolicy, func(ctx context.Context, attempt int) error {
+		err := retry.Do(ctx, customPolicy, func(ctx context.Context, attempt int) error {
 			err := c.DoThing(ctx, &DoThingRequest{}, &resp)
 			if err != nil {
 				count++
@@ -145,7 +143,7 @@ func TestRetry(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		customPolicy := retry.Policy{
 			// No Backoff, just sleep in-between retries
-			Interval: retry.Sleep(100 * time.Millisecond),
+			Interval: retry.IntervalSleep(100 * time.Millisecond),
 			// Attempts of 0 indicate infinite retries
 			Attempts: 0,
 		}
@@ -157,7 +155,7 @@ func TestRetry(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
-			err := retry.On(ctx, customPolicy, func(ctx context.Context, attempt int) error {
+			err := retry.Do(ctx, customPolicy, func(ctx context.Context, attempt int) error {
 				return c.DoThing(ctx, &DoThingRequest{}, &resp)
 			})
 			require.Error(t, err)
