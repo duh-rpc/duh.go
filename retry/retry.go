@@ -109,7 +109,7 @@ type Policy struct {
 	Budget Budget
 
 	// Attempts is the number of "attempts" before an individual retry returns an error to the caller.
-	// Attempts includes the first attempt, it is a count of the number of "total attempts" that
+	// Attempts includes the first attempt, it is a ount of the number of "total attempts" that
 	// will be attempted.
 	Attempts int // 0 for infinite
 }

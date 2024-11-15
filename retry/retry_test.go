@@ -77,7 +77,7 @@ func TestRetry(t *testing.T) {
 		require.Equal(t, 2, count)
 	})
 
-	t.Run("UntilSuccess", func(t *testing.T) {
+	t.Run("Until", func(t *testing.T) {
 		c.Attempts = 5
 		count = 0
 
@@ -92,7 +92,7 @@ func TestRetry(t *testing.T) {
 		require.Equal(t, 5, count)
 	})
 
-	t.Run("OnRetryable", func(t *testing.T) {
+	t.Run("PolicyOnRetryable", func(t *testing.T) {
 		c.Err = &testError{code: duh.CodeRetryRequest}
 		c.Attempts = 5
 		count = 0
@@ -110,7 +110,7 @@ func TestRetry(t *testing.T) {
 		require.Equal(t, 5, count)
 	})
 
-	t.Run("CustomPolicyBackoff", func(t *testing.T) {
+	t.Run("CustomBackoff", func(t *testing.T) {
 		customPolicy := retry.Policy{
 			OnCodes: []int{duh.CodeConflict, duh.CodeTooManyRequests, 502, 503, 504},
 			Interval: retry.IntervalBackOff{
@@ -139,7 +139,7 @@ func TestRetry(t *testing.T) {
 		require.Equal(t, 5, count)
 	})
 
-	t.Run("RetryUntilCancelled", func(t *testing.T) {
+	t.Run("CustomPolicy", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		customPolicy := retry.Policy{
 			// No Backoff, just sleep in-between retries
