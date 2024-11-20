@@ -17,6 +17,7 @@ package retry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/duh-rpc/duh-go"
 	"math"
 	"math/rand"
@@ -57,7 +58,9 @@ type IntervalBackOff struct {
 func (b IntervalBackOff) Next(attempts int) time.Duration {
 	d := time.Duration(float64(b.Min) * math.Pow(b.Factor, float64(attempts)))
 	if b.Rand != nil {
-		d = time.Duration(b.Rand.Float64() * b.Jitter * float64(d))
+		upper := float64(d) + (float64(d) * b.Jitter)
+		lower := float64(d) - (float64(d) * b.Jitter)
+		d = time.Duration(lower + b.Rand.Float64()*(upper-lower))
 	}
 	if d > b.Max {
 		return b.Max
@@ -66,6 +69,48 @@ func (b IntervalBackOff) Next(attempts int) time.Duration {
 		return b.Min
 	}
 	return d
+}
+
+// BackOffExplain explains the calculations involved in a back off attempt which
+// is helpful when deciding upon values for retry.IntervalBackOff. Returned by
+// IntervalBackOff.Explain()
+type BackOffExplain struct {
+	// The minimum range used to calculate jitter
+	RangeMin time.Duration
+	// The maximum range used to calculate jitter
+	RangeMax time.Duration
+	// The back off as a calculation of the minimum interval and the PowerOf
+	BackOff time.Duration
+	// The power of calculation of attempts and factor
+	PowerOf float64
+	// The backoff with jitter applied
+	WithJitter time.Duration
+	// The current attempt used in this explanation
+	Attempt int
+}
+
+// Explain explains the calculation involved based on the number of attempts provided
+func (b IntervalBackOff) Explain(attempt int) BackOffExplain {
+	// Calc the power of the factor based on attempts
+	e := BackOffExplain{Attempt: attempt, PowerOf: math.Pow(b.Factor, float64(attempt))}
+	// Backoff is the minimum multiplied by the power
+	e.BackOff = time.Duration(float64(b.Min) * e.PowerOf)
+
+	// If we asked for jitter
+	if b.Rand != nil {
+		percent := float64(e.BackOff) * b.Jitter
+		e.RangeMin = time.Duration(float64(e.BackOff) - percent)
+		e.RangeMax = time.Duration(float64(e.BackOff) + percent)
+		e.WithJitter = time.Duration(float64(e.RangeMin) + b.Rand.Float64()*float64(e.RangeMax-e.RangeMin))
+	}
+	return e
+}
+
+// ExplainString is the same as Explain() but returns the explanation as a string
+func (b IntervalBackOff) ExplainString(attempts int) string {
+	e := b.Explain(attempts)
+	return fmt.Sprintf("Attempt: %d BackOff: %s WithJitter: %s Jitter Range: [%s - %s]\n",
+		e.Attempt, e.BackOff, e.WithJitter, e.RangeMin, e.RangeMax)
 }
 
 // IntervalSleep is a constant sleep interval which sleeps for the duration provided before retrying.
@@ -177,7 +222,7 @@ func Do(ctx context.Context, p Policy, op func(context.Context, int) error) erro
 			}
 
 			if shouldRetry(ctx, p, err) {
-				time.Sleep(p.Interval.Next(p.Attempts))
+				time.Sleep(p.Interval.Next(attempt))
 				attempt++
 			} else {
 				return err

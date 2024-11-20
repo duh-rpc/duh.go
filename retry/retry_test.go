@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"math"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -179,4 +180,103 @@ func (t testError) Error() string               { return "" }
 func (t testError) Message() string             { return "" }
 func (t testError) Code() int {
 	return t.code
+}
+
+func TestIntervalBackOff(t *testing.T) {
+	p := retry.IntervalBackOff{
+		Min:    500 * time.Millisecond,
+		Max:    60 * time.Second,
+		Factor: 1.5,
+	}
+
+	assert.Equal(t, 0.500, p.Next(0).Seconds())
+	assert.Equal(t, 0.750, p.Next(1).Seconds())
+	assert.Equal(t, 1.125, p.Next(2).Seconds())
+	assert.Equal(t, 1.6875, p.Next(3).Seconds())
+	assert.Equal(t, 2.53125, p.Next(4).Seconds())
+	assert.Equal(t, 3.796875, p.Next(5).Seconds())
+	assert.Equal(t, 5.6953125, p.Next(6).Seconds())
+	assert.Equal(t, 8.54296875, p.Next(7).Seconds())
+	assert.Equal(t, 12.814453125, p.Next(8).Seconds())
+	assert.Equal(t, 19.221679687, p.Next(9).Seconds())
+	assert.Equal(t, 28.832519531, p.Next(10).Seconds())
+	assert.Equal(t, 43.248779296, p.Next(11).Seconds())
+	assert.Equal(t, 60.0, p.Next(12).Seconds())
+}
+
+func TestIntervalBackOffWithJitter(t *testing.T) {
+	p := retry.IntervalBackOff{
+		Rand:   rand.New(rand.NewSource(0)),
+		Min:    500 * time.Millisecond,
+		Max:    60 * time.Second,
+		Factor: 1.5,
+		Jitter: 0.5,
+	}
+
+	assert.Equal(t, 0.722598074, p.Next(0).Seconds())
+	assert.Equal(t, 0.558723813, p.Next(1).Seconds())
+	assert.Equal(t, 1.300450798, p.Next(2).Seconds())
+	assert.Equal(t, 0.935455229, p.Next(3).Seconds())
+	assert.Equal(t, 2.196080116, p.Next(4).Seconds())
+}
+
+// This test ensures the Explain() calculation agrees with the Next()
+// calculation.
+func TestExplainAgrees(t *testing.T) {
+	t.Run("backoff", func(t *testing.T) {
+		i := retry.IntervalBackOff{
+			Min:    500 * time.Millisecond,
+			Max:    60 * time.Second,
+			Factor: 1.5,
+		}
+		e := retry.IntervalBackOff{
+			Min:    500 * time.Millisecond,
+			Max:    60 * time.Second,
+			Factor: 1.5,
+		}
+
+		assert.Equal(t, i.Next(0), e.Explain(0).BackOff)
+		assert.Equal(t, i.Next(1), e.Explain(1).BackOff)
+		assert.Equal(t, i.Next(2), e.Explain(2).BackOff)
+		assert.Equal(t, i.Next(3), e.Explain(3).BackOff)
+	})
+
+	t.Run("with-jitter", func(t *testing.T) {
+		i := retry.IntervalBackOff{
+			Rand:   rand.New(rand.NewSource(0)),
+			Min:    500 * time.Millisecond,
+			Max:    60 * time.Second,
+			Factor: 1.5,
+			Jitter: 0.5,
+		}
+		e := retry.IntervalBackOff{
+			Rand:   rand.New(rand.NewSource(0)),
+			Min:    500 * time.Millisecond,
+			Max:    60 * time.Second,
+			Factor: 1.5,
+			Jitter: 0.5,
+		}
+
+		assert.Equal(t, i.Next(0), e.Explain(0).WithJitter)
+		assert.Equal(t, i.Next(1), e.Explain(1).WithJitter)
+		assert.Equal(t, i.Next(2), e.Explain(2).WithJitter)
+		assert.Equal(t, i.Next(3), e.Explain(3).WithJitter)
+	})
+}
+
+func TestExplainString(t *testing.T) {
+	p := retry.IntervalBackOff{
+		Rand:   rand.New(rand.NewSource(0)),
+		Min:    500 * time.Millisecond,
+		Max:    60 * time.Second,
+		Factor: 1.5,
+		Jitter: 0.5,
+	}
+
+	t.Logf("retry.IntervalBackOff{\n\tMin: %v\n\t"+
+		"Max: %v\n\tJitter: %v\n\tFactor: %v\n}\n", p.Min, p.Max, p.Jitter, p.Factor)
+
+	for attempts := 0; attempts < 10; attempts++ {
+		t.Logf(p.ExplainString(attempts))
+	}
 }
