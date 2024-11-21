@@ -277,6 +277,6 @@ func TestExplainString(t *testing.T) {
 		"Max: %v\n\tJitter: %v\n\tFactor: %v\n}\n", p.Min, p.Max, p.Jitter, p.Factor)
 
 	for attempts := 0; attempts < 10; attempts++ {
-		t.Logf(p.ExplainString(attempts))
+		t.Logf("%s\n", p.ExplainString(attempts))
 	}
 }

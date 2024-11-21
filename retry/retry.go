@@ -34,21 +34,33 @@ type Interval interface {
 	Next(attempts int) time.Duration
 }
 
-// IntervalBackOff implements backoff algorithm with jitter
+// IntervalBackOff implements backoff algorithm with a random jitter
 //
 //	interval := retry.IntervalBackOff{
-//			Rand: rand.New(rand.NewSource(time.Now().UnixNano())),
-//			Min:    500 * time.Millisecond,
-//			Max:    5 * time.Second,
-//			Jitter: 0.2,
-//			Factor: 0.5,
-//		},
+//		Rand: rand.New(rand.NewSource(time.Now().UnixNano())),
+//		Min:    500 * time.Millisecond,
+//		Max:    60 * time.Second,
+//		Jitter: 0.2, // 20 percent
+//		Factor: 1.5,
+//	}
 type IntervalBackOff struct {
-	Min    time.Duration
-	Max    time.Duration
+	// Min is the minimum duration of a sleep
+	Min time.Duration
+	// Max is the maximum duration of a sleep, the exponential calculation will never exceed this duration.
+	Max time.Duration
+	// Factor is the power by which the minimum duration is applied.
+	// NOTE: Use a value of 1.0 or higher, using a factor
+	// of 1 or less will not result in an exponential back off
 	Factor float64
+	// Jitter is the percentage of the Min duration which is used to determine the range of variation when choosing
+	// a sleep value. For example: an exponential back off calculation of 1 second with a Jitter of 0.50 (50%)
+	// will choose a random sleep duration between 0.5 and 1.5 seconds (500ms, which is 50% of 1 second)
+	//
+	// The purpose of Jitter is to ensure many client do not all retry at the same time creating additional load
+	// on the recovering or downed remote node.
 	Jitter float64
-	Rand   *rand.Rand
+	// Rand is the rand instance used to calculate the jitter. If Rand is nil, no jitter is applied.
+	Rand *rand.Rand
 }
 
 // TODO: Include an example backoff retry interval chart in the documentation, similar too
@@ -109,7 +121,7 @@ func (b IntervalBackOff) Explain(attempt int) BackOffExplain {
 // ExplainString is the same as Explain() but returns the explanation as a string
 func (b IntervalBackOff) ExplainString(attempts int) string {
 	e := b.Explain(attempts)
-	return fmt.Sprintf("Attempt: %d BackOff: %s WithJitter: %s Jitter Range: [%s - %s]\n",
+	return fmt.Sprintf("Attempt: %d BackOff: %s WithJitter: %s Jitter Range: [%s - %s]",
 		e.Attempt, e.BackOff, e.WithJitter, e.RangeMin, e.RangeMax)
 }
 
@@ -160,14 +172,15 @@ type Policy struct {
 }
 
 // PolicyDefault is the policy shared by package level Until(), and UntilAttempts() functions
+// These values taken from Google Java Client
+// https://cloud.google.com/java/docs/reference/google-http-client/1.43.0/com.google.api.client.util.ExponentialBackOff
 var PolicyDefault = Policy{
 	Interval: IntervalBackOff{
-		Rand: rand.New(rand.NewSource(time.Now().UnixNano())),
-		// These values taken from Google Java Client
+		Rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 		Min:    500 * time.Millisecond,
-		Max:    5 * time.Second,
-		Jitter: 0.2,
-		Factor: 0.5,
+		Max:    time.Minute,
+		Factor: 1.5,
+		Jitter: 0.5,
 	},
 	Budget:   nil,
 	Attempts: 0, // Infinite retries
