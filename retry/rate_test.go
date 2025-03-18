@@ -93,7 +93,7 @@ func TestRate(t *testing.T) {
 		now = now.Add(time.Minute)
 		mr.Add(now, 5)
 		assert.Equal(t, "5.00", fmt.Sprintf("%.2f", mr.Rate(now)))
-		t.Logf("AFTER  mr = %+v", mr)
+		//t.Logf("AFTER  mr = %+v", mr)
 	})
 }
 

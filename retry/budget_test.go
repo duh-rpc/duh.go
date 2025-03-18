@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/duh-rpc/duh-go/retry"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"math/rand"
 	"net/http"
@@ -18,6 +19,105 @@ import (
 	"time"
 )
 
+func TestNewBudget(t *testing.T) {
+	t.Run("InitialState", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+		assert.False(t, budget.IsOver(now), "New budget should not be over")
+	})
+
+	t.Run("OverBudget", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Add some successes
+		budget.Success(now, 10)
+
+		// Add failures to exceed the budget
+		budget.Failure(now, 25)
+
+		assert.True(t, budget.IsOver(now), "Budget should be over after many failures")
+	})
+
+	t.Run("UnderBudget", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Add some successes
+		budget.Success(now, 10)
+
+		// Add failures, but not enough to exceed the budget
+		budget.Failure(now, 15)
+
+		assert.False(t, budget.IsOver(now), "Budget should not be over")
+	})
+
+	t.Run("RecoveryAfterSuccess", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Add failures to exceed the budget
+		budget.Failure(now, 25)
+		budget.Success(now, 10)
+
+		assert.True(t, budget.IsOver(now), "Budget should be over after many failures")
+
+		// Add successes to recover
+		budget.Success(now, 30)
+
+		assert.False(t, budget.IsOver(now), "Budget should recover after many successes")
+	})
+
+	t.Run("ZeroSuccessRate", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Only add failures
+		budget.Failure(now, 10)
+
+		assert.True(t, budget.IsOver(now), "Budget should be over with zero success rate")
+	})
+
+	t.Run("ZeroFailureRate", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Only add successes
+		budget.Success(now, 10)
+
+		assert.False(t, budget.IsOver(now), "Budget should not be over with zero failure rate")
+	})
+
+	t.Run("TimeDecay", func(t *testing.T) {
+		budget := retry.NewBudget(2.0)
+		now := time.Now()
+
+		// Add failures to exceed the budget
+		budget.Failure(now, 20)
+		budget.Success(now, 5)
+
+		assert.True(t, budget.IsOver(now), "Budget should be over after many failures")
+
+		// Move time forward by 30 seconds
+		futureTime := now.Add(30 * time.Second)
+		assert.True(t, budget.IsOver(futureTime), "Budget should still be over after 30 seconds")
+
+		// Move time forward by another 31 seconds (total 61 seconds)
+		futureTime = now.Add(61 * time.Second)
+		assert.False(t, budget.IsOver(futureTime), "Budget should not be over after 61 seconds due to time decay")
+
+		// Add a small number of failures
+		budget.Failure(futureTime, 5)
+		budget.Success(futureTime, 5)
+
+		assert.False(t, budget.IsOver(futureTime), "Budget should still not be over after adding a few failures")
+
+		// Add more failures to exceed the budget again
+		budget.Failure(futureTime, 15)
+		assert.True(t, budget.IsOver(futureTime), "Budget should be over after adding many failures again")
+	})
+}
+
 type Point struct {
 	Time    time.Time
 	Success int
@@ -25,7 +125,7 @@ type Point struct {
 }
 
 func TestBudgetGraph(t *testing.T) {
-
+	t.Skip("used for graphing budgets vs backoff recovery time")
 	client := http.Client{
 		Transport: &http.Transport{
 			ForceAttemptHTTP2:     true,
@@ -35,17 +135,17 @@ func TestBudgetGraph(t *testing.T) {
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
-	//report(t, retry.Policy{
-	//	Interval: retry.IntervalBackOff{
-	//		Rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
-	//		Min:    time.Millisecond,
-	//		Max:    500 * time.Millisecond,
-	//		Factor: 1.01,
-	//		Jitter: 0.50,
-	//	},
-	//	Budget:   nil,
-	//	Attempts: 0,
-	//}, client, "no-budget")
+	report(t, retry.Policy{
+		Interval: retry.IntervalBackOff{
+			Rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+			Min:    time.Millisecond,
+			Max:    500 * time.Millisecond,
+			Factor: 1.01,
+			Jitter: 0.50,
+		},
+		Budget:   nil,
+		Attempts: 0,
+	}, client, "no-budget")
 
 	report(t, retry.Policy{
 		Interval: retry.IntervalBackOff{
@@ -55,8 +155,7 @@ func TestBudgetGraph(t *testing.T) {
 			Factor: 1.01,
 			Jitter: 0.50,
 		},
-		// TODO: Implement Budget
-		Budget:   nil,
+		Budget:   retry.NewBudget(10.0),
 		Attempts: 0,
 	}, client, "with-budget")
 }
@@ -66,9 +165,6 @@ func report(t *testing.T, policy retry.Policy, client http.Client, prefix string
 	var upTime []Point
 	var mutex sync.Mutex
 	var down atomic.Bool
-
-	// TODO: Remove
-	prefix = fmt.Sprintf("/Users/thrawn/Development/marimo/%s", prefix)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if down.Load() {

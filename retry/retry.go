@@ -26,10 +26,6 @@ import (
 	"time"
 )
 
-type Budget interface {
-	Allow(context.Context) error
-}
-
 type Interval interface {
 	Next(attempts int) time.Duration
 }
@@ -165,8 +161,8 @@ type Policy struct {
 	// See https://medium.com/yandex/good-retry-bad-retry-an-incident-story-648072d3cee6
 	Budget Budget
 
-	// Attempts is the number of "attempts" before an individual retry returns an error to the caller.
-	// Attempts includes the first attempt, it is a ount of the number of "total attempts" that
+	// Attempts is the number of "attempts" before an individual retry returns an error to the caller
+	// and includes the first attempt, it is a count of the number of "total attempts" that
 	// will be attempted.
 	Attempts int // 0 for infinite
 }
@@ -221,7 +217,11 @@ func UntilAttempts(ctx context.Context, attempts int, sleep time.Duration, op fu
 func Do(ctx context.Context, p Policy, op func(context.Context, int) error) error {
 	attempt := 1
 	if p.Interval == nil {
-		panic("Policy.Interval cannot be nil")
+		p.Interval = IntervalSleep(time.Second)
+	}
+
+	if p.Budget == nil {
+		p.Budget = noOpBudget{}
 	}
 
 	for {
@@ -229,12 +229,20 @@ func Do(ctx context.Context, p Policy, op func(context.Context, int) error) erro
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+			if p.Budget.IsOver(time.Now()) {
+				time.Sleep(p.Interval.Next(attempt))
+				attempt++
+				continue
+			}
+
 			err := op(ctx, attempt)
 			if err == nil || (p.Attempts != 0 && attempt >= p.Attempts) {
+				p.Budget.Success(time.Now(), 1)
 				return err
 			}
 
-			if shouldRetry(ctx, p, err) {
+			p.Budget.Failure(time.Now(), 1)
+			if shouldRetry(p, err) {
 				time.Sleep(p.Interval.Next(attempt))
 				attempt++
 			} else {
@@ -244,9 +252,9 @@ func Do(ctx context.Context, p Policy, op func(context.Context, int) error) erro
 	}
 }
 
-func shouldRetry(ctx context.Context, policy Policy, err error) bool {
+func shouldRetry(policy Policy, err error) bool {
 	if err == nil {
-		panic("err cannot be nil")
+		panic("assertion failed; err cannot be nil")
 	}
 
 	if policy.OnCodes != nil {
@@ -256,14 +264,6 @@ func shouldRetry(ctx context.Context, policy Policy, err error) bool {
 		}
 	} else {
 		return true
-	}
-
-	if policy.Budget != nil {
-		// Allow blocks until the context is cancelled or the budget allows
-		// the retry to occur.
-		if policy.Budget.Allow(ctx) == nil {
-			return true
-		}
 	}
 	return false
 }

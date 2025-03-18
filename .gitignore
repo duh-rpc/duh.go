@@ -6,3 +6,4 @@ gubernator.egg-info/
 .venv*/
 .DS_Store
 .obsidian/
+.aider*
