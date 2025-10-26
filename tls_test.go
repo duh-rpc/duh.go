@@ -98,7 +98,7 @@ func TestSetupTLS(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				err = srv.ListenAndServeTLS("", "")
-				if err != nil && !errors.Is(http.ErrServerClosed, err) {
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					t.Logf("server listen error: %v", err)
 				}
 			}()
@@ -144,7 +144,7 @@ func TestSetupTLSSkipVerify(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		err = srv.ListenAndServeTLS("", "")
-		if err != nil && !errors.Is(http.ErrServerClosed, err) {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("server listen error: %v", err)
 		}
 	}()
@@ -197,7 +197,7 @@ func TestSetupTLSClientAuth(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		err = srv.ListenAndServeTLS("", "")
-		if err != nil && !errors.Is(http.ErrServerClosed, err) {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("server listen error: %v", err)
 		}
 	}()
