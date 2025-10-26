@@ -1,23 +1,25 @@
-> This README is a work in progress, and will likely be in a separate repo separating the spec from the
-> implementation. 
-> 
-> PLEASE FEEL FREE TO OPEN A PR AND CORRECT OR ADD ANYTHING.
-
 # DUH-RPC - Duh, Use Http for RPC
-The goal of this project is not to duplicate GRPC or any other RPC style framework. It is in fact the opposite. It is an 
-attempt to evangelize Standard HTTP for RPC. To help share the knowledge that you can get or exceed GRPC performance and 
-consistency by simply using HTTP and following some basic rules and using a basic set of HTTP codes.
 
-We started this journey after we realized [GRPC was slower than HTTP/1]. Next, we wanted to know if we could
-gain the simplicity of an RPC framework, while exceeding performance and also reducing complexity. We realized, you
-don't need a fancy framework to build performant and scalable APIs. All you need are some best practices born out of 
-experience in building and scaling high-performance APIs that developers love.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/duh-rpc/duh.go)](https://golang.org/dl/)
+[![CI Status](https://github.com/duh-rpc/duh.go/workflows/CI/badge.svg)](https://github.com/duh-rpc/duh.go/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Report Card](https://goreportcard.com/badge/github.com/duh-rpc/duh.go)](https://goreportcard.com/report/github.com/duh-rpc/duh.go)
 
-## What is DUH-RPC?
-The goal of this project isn't to create a new framework. The goal instead is to get developers thinking about WHY
-they might be reaching for an RPC style framework, when what they actually want is a basic definition of naming, retry,
-error and streaming semantics. This spec is an attempt to define those basic semantics which can be followed and
-audited using standard HTTP and OpenAPI tooling. 
+**DUH-RPC uses OpenAPI and all the tooling that comes with it, to build high performance RPC style HTTP endpoints
+that easily rival or exceed the performance of other RPC frameworks**
+
+JSON and Route processing typically used by REST means traditional REST **WILL ALWAYS BE SLOWER THAN RPC**
+- JSON marshalling is always going to slower than protobuf
+- Regex/Route parsing is always going to be slower than matching a string with a switch statement
+
+These two things are the major performance advantages GRPC has over tranditional REST.
+
+If you use protobuf and simple string based matching like GRPC does, then any performance
+advantages of GRPC are diminshed to the point where they don't matter. In fact, as of this writing, DUH-RPC
+using OpenAPI and [standard net/http outperforms golang GRPC](https://github.com/duh-rpc/duh-benchmarks.go)!
+
+DUH-RPC simply says this: You don't need a fancy framework to get the performance of GRPC, Just don't do things
+that are slow. 
 
 This repo includes a simple implementation of the DUH-RPC spec in golang to illustrate how easy it is to create a high
 performance and scalable RPC style service by following the DUH-RPC spec.
@@ -25,7 +27,7 @@ performance and scalable RPC style service by following the DUH-RPC spec.
 DUH-RPC design is intended to be 100% compatible with OpenAPI tooling, Linters and Governance tooling to aid in the 
 development of APIs Without compromising on Error Handling Consistency, Performance or Scalability.
 
-# DUH Examples
+# Simple DUH-RPC Example
 ### Successful Call
 `POST http://localhost:8080/v1/say.hello {"name": "John Wick"}`
 ```json
@@ -33,9 +35,10 @@ development of APIs Without compromising on Error Handling Consistency, Performa
     "message": "Hello, John Wick"
 }
 ```
-TODO MORE EXAMPLES HERE
 
-### What's good about DUH-RPC?
+TODO: Use duh-cli to install and create a new demo project, demo linting and generation
+
+### What's good about DUH-RPC Spec
 * Consistent Error Handling, which allows libraries and frameworks to handle errors uniformly.
 * Consistent RPC method naming, no need to second guess where in the hierarchy the operation should exist.
 * You can use the same endpoints and frameworks for both private and public facing APIs, with no need to have separate
@@ -57,7 +60,7 @@ DUH-RPC if your intended use case is users sharing links to be clicked.
 IE: https://www.google.com/search?q=rpc+api
 
 ## Why not GRPC?
-Like DUH, GRPC has consistent semantics like flow control, request cancellation, and error handling. However, it is
+GRPC has consistent semantics like flow control, request cancellation, and error handling. However, it is
 not without its own issues.
 * GRPC is more complex than is necessary for high-performance, distributed environments.
 * GRPC implementations can be slower than expected (Slower than standard HTTP)
@@ -77,7 +80,9 @@ of RPC or for performance reasons. In our experience REST is suboptimal for a fe
 
 For a deeper dive on REST See [Why not REST](why-not-rest.md)
 
-# DUH Spec
+TODO: Separate the Spec into a separate docs/spec.md file
+
+# The DUH Spec
 > This spec is a work in progress and is not an exhaustive set of DO's and DON'Ts. If you have a suggestion, please
 > consider opening a PR to help contribute to the spec.
 
