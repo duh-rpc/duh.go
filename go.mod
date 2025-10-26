@@ -1,6 +1,6 @@
 module github.com/duh-rpc/duh.go
 
-go 1.24.7
+go 1.23
 
 require (
 	github.com/kapetan-io/tackle v0.1.0
