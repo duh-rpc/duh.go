@@ -44,7 +44,7 @@ DUH-RPC if your intended use case is users sharing links to be clicked. Eg.. htt
 ## Why not GRPC?
 GRPC has consistent semantics like flow control, request cancellation, and error handling. However, it is
 not without its own issues.
-* GRPC is more complex than is necessary for high-performance, distributed environments.
+* GRPC can be more complex than necessary for high-performance, distributed environments.
 * GRPC implementations can be slower than expected (Slower than standard HTTP)
 * Using GRPC can result in more code than using standard HTTP
 * GRPC is not suitable for public web-based APIs
