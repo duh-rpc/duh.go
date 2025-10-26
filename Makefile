@@ -1,6 +1,4 @@
 .DEFAULT_GOAL := run
-LINT = $(GOPATH)/bin/golangci-lint
-LINT_VERSION = 1.62.2
 
 .PHONY: test
 test:
@@ -15,12 +13,9 @@ proto:
 run:
 	go run -race cmd/demo/main.go
 
-$(LINT): ## Download Go linter
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin $(LINT_VERSION)
-
 .PHONY: lint
-lint: $(LINT) ## Run Go linter
-	$(LINT) run -v ./...
+lint:
+	golangci-lint run -v ./...
 
 .PHONY: tidy
 tidy:
