@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/duh-rpc/duh-go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/proto/v1"
 	"golang.org/x/net/http2"
 	json "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -49,7 +49,7 @@ var (
 	// DefaultClient is the default HTTP client to use when making RPC calls.
 	// We use the HTTP/1 client as it outperforms both GRPC and HTTP/2
 	// See:
-	// * https://github.com/duh-rpc/duh-go-benchmarks
+	// * https://github.com/duh-rpc/duh.go-benchmarks
 	// * https://github.com/golang/go/issues/47840
 	// * https://www.emcfarlane.com/blog/2023-05-15-grpc-servehttp
 	// * https://github.com/kgersen/h3ctx

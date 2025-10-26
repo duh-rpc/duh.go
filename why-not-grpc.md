@@ -38,7 +38,7 @@ eclipsed by standard HTTP/2 implementation. Our own hands-on experiments showed 
 not as great as is assumed to be, especially in high-concurrency, low-latency scenarios. In fact, the entire reason this
 spec exists is the realization, that our standard HTTP services were outperforming our GRPC based services.
 
-See https://github.com/duh-rpc/duh-go-benchmarks for a comparison of DUH with GRPC in golang. (prepare yourself for a shock)
+See https://github.com/duh-rpc/duh.go-benchmarks for a comparison of DUH with GRPC in golang. (prepare yourself for a shock)
 
 ### GRPC and Service Mesh
 We used a service mesh at Mailgun that was incompatible with GRPC, so we had to use the client side load balancing and

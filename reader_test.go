@@ -3,7 +3,7 @@ package duh_test
 import (
 	"bytes"
 	"errors"
-	"github.com/duh-rpc/duh-go"
+	"github.com/duh-rpc/duh.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"

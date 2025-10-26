@@ -17,7 +17,7 @@ package retry
 import (
 	"context"
 	"errors"
-	"github.com/duh-rpc/duh-go"
+	"github.com/duh-rpc/duh.go"
 	"math"
 	"math/rand"
 	"net/http"

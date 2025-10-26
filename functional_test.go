@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/duh-rpc/duh-go/demo"
+	"github.com/duh-rpc/duh.go/demo"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 )

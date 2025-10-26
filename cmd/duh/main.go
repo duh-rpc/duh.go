@@ -27,8 +27,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/duh-rpc/duh-go"
-	v1 "github.com/duh-rpc/duh-go/proto/v1"
+	"github.com/duh-rpc/duh.go"
+	v1 "github.com/duh-rpc/duh.go/proto/v1"
 	"gopkg.in/yaml.v3"
 )
 

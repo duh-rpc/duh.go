@@ -21,7 +21,7 @@ import (
 	"math/rand"
 	"net/http"
 
-	"github.com/duh-rpc/duh-go"
+	"github.com/duh-rpc/duh.go"
 )
 
 type Handler struct {

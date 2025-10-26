@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net/http"
 
-	v1 "github.com/duh-rpc/duh-go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/proto/v1"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -17,8 +17,8 @@ package retry_test
 import (
 	"context"
 	"errors"
-	"github.com/duh-rpc/duh-go"
-	"github.com/duh-rpc/duh-go/retry"
+	"github.com/duh-rpc/duh.go"
+	"github.com/duh-rpc/duh.go/retry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"

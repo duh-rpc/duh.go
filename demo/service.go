@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/duh-rpc/duh-go"
+	"github.com/duh-rpc/duh.go"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

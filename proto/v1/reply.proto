@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package duh.v1;
 
-option go_package = "github.com/duh-rpc/duh-go/proto/v1";
+option go_package = "github.com/duh-rpc/duh.go/proto/v1";
 
 message Reply {
     int32 code = 1;

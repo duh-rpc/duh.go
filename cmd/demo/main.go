@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/duh-rpc/duh-go/demo"
+	"github.com/duh-rpc/duh.go/demo"
 )
 
 type config struct {

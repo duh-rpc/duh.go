@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package duh.v1;
 
-option go_package = "github.com/duh-rpc/duh-go/internal/test";
+option go_package = "github.com/duh-rpc/duh.go/internal/test";
 
 message ErrorsRequest {
   string case = 1;

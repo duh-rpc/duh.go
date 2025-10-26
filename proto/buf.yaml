@@ -1,5 +1,5 @@
 version: v1
-name: buf.build/duh-rpc/duh-go
+name: buf.build/duh-rpc/duh.go
 deps:
   - buf.build/googleapis/googleapis
 lint:
