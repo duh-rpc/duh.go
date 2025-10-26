@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := run
 LINT = $(GOPATH)/bin/golangci-lint
-LINT_VERSION = 1.56.2
+LINT_VERSION = 1.62.2
 
 .PHONY: test
 test:
