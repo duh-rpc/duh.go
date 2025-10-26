@@ -8,7 +8,7 @@ has accepted that there will be one-off standard HTTP endpoints for external cus
 
 ### GRPC is not suitable for the Web
 As mentioned above, when adopting GRPC you accept that any public facing API's designed to be accessible via the WEB
-at scale cannot be GRPC. GRPC is useful only as an internal communication method to make calls between services.
+at scale cannot be GRPC. GRPC is mostly useful as an internal communication method to make calls between services.
 
 Much as been written about why GRPC is not suitable for the web, but the core rational is that GRPC uses sticky
 connections, and it prefers client side load balancing. Both of which make load balancing clients difficult by
@@ -38,7 +38,7 @@ eclipsed by standard HTTP/2 implementation. Our own hands-on experiments showed 
 not as great as is assumed to be, especially in high-concurrency, low-latency scenarios. In fact, the entire reason this
 spec exists is the realization, that our standard HTTP services were outperforming our GRPC based services.
 
-See https://github.com/duh-rpc/duh.go-benchmarks for a comparison of DUH with GRPC in golang. (prepare yourself for a shock)
+See https://github.com/duh-rpc/duh-benchmarks.go for a comparison of DUH with GRPC in golang.
 
 ### GRPC and Service Mesh
 We used a service mesh at Mailgun that was incompatible with GRPC, so we had to use the client side load balancing and
@@ -53,5 +53,4 @@ TODO: Talk about the performance issues we have experienced using GRPC gateway.
 TODO: TLS connection to local gateway issue. (See Gubernator)
 
 ### GPRC is not Protobuf
-You can and should use Protobuf. You don't need to use GRPC to use Protobuf. (I've had a few people be confused
-about this) MORE HERE?
+You can and should use Protobuf. You don't need to use GRPC to use Protobuf.
