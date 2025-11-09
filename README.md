@@ -5,37 +5,72 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Report Card](https://goreportcard.com/badge/github.com/duh-rpc/duh.go)](https://goreportcard.com/report/github.com/duh-rpc/duh.go)
 
-**DUH-RPC uses OpenAPI and all the tooling that comes with it to build high-performance RPC-style HTTP endpoints
-that easily rival or exceed the performance of other RPC frameworks**
+**DUH-RPC simply says this: You don't need a fancy framework to get the performance of GRPC, just don't do things
+with HTTP that are slow**
 
 The JSON and route processing typically used by REST means traditional REST **WILL ALWAYS BE SLOWER THAN RPC**
-- JSON marshalling is always going to be slower than protobuf
-- Regex/Route parsing is always going to be slower than matching a string with a switch statement
+- JSON marshalling is ALWAYS going to be slower than protobuf
+- Regex/Route parsing is ALWAYS going to be slower than matching a string with a switch statement
 
 These two things are the major performance advantages GRPC has over traditional REST.
 
-If you use protobuf and simple string-based matching like GRPC does, then any performance
+All you have to do is use protobuf and simple string-based matching like GRPC does. If you do, then any performance
 advantages of GRPC are diminished to the point where they don't matter. In fact, as of this writing, DUH-RPC
-using OpenAPI and standard net/http [outperforms golang GRPC](https://github.com/duh-rpc/duh-benchmarks.go)!
-
-DUH-RPC simply says this: You don't need a fancy framework to get the performance of GRPC, just don't do things
-that are slow. 
+using OpenAPI with standard net/http [outperforms golang GRPC](https://github.com/duh-rpc/duh-benchmarks.go)!
 
 This repo includes a simple implementation of the DUH-RPC spec in golang to illustrate how easy it is to create a high-performance and scalable RPC-style service by following the DUH-RPC spec.
 
 DUH-RPC design is intended to be 100% compatible with OpenAPI tooling, linters, and governance tooling to aid in the
 development of APIs without compromising on error handling consistency, performance, or scalability.
 
-## A Simple DUH-RPC Example
+## A DUH-RPC Example Request
 `POST http://localhost:8080/v1/say.hello {"name": "John Wick"}`
 ```json
 {
     "message": "Hello, John Wick"
 }
 ```
+#### Who is using DUH style RPC?
+- Slack API - Take a look at the [Slack API Methods](https://docs.slack.dev/reference/methods)
 
-> TODO: Use duh-cli to install and create a new demo project, then demo linting and DUH-RPC code generation from an
-OpenAPI spec.
+## Quick Start
+The DUH-RPC cli tool uses OpenAPI and to build high-performance RPC-style HTTP endpoints
+that easily rival or exceed the performance of other RPC frameworks
+
+Install the `duh` cli linter and generator
+```bash
+go install github.com/duh-cli/duh-cli@latest
+```
+
+Get a DUH-RPC service up and running in minutes:
+
+```bash
+# 1. Create a new directory for your service
+mkdir my-service && cd my-service
+
+# 2. Initialize a new DUH-RPC OpenAPI specification
+duh init
+
+# 3. Initialize Go module
+go mod init github.com/my-org/my-service
+
+# 4. Generate complete service scaffolding (client, server, daemon, tests, Makefile)
+duh generate --full
+
+# 5. Install dependencies
+go mod tidy
+
+# 6. Generate Go code from protobuf definitions
+buf generate
+
+# 7. Run tests to verify everything works
+make test
+```
+
+See the [DUH-RPC CLI](https://github.com/duh-rpc/duh-cli) repo for complete documentation on the DUH-RPC CLI.
+
+> NOTE: You don't need the CLI to follow the DUH-RPC style. The CLI is just a convenient way to generate
+> boilerplate code and documentation.
 
 ## When is DUH-RPC not appropriate?
 DUH-RPC, like most RPC APIs, is intended for service to service communication. It doesn't make sense to use
@@ -72,7 +107,7 @@ For a deeper dive on REST, see [Why not REST](docs/why-not-rest.md).
 * The API can be inspected and called from GUI clients like [Postman](https://www.postman.com/),
   or [hoppscotch](https://github.com/hoppscotch/hoppscotch)
 * Use standard schema linting tools and OpenAPI-based services for integration and compliance testing of APIs
-* Design, deploy and generate documentation for your API using standard OpenAPI tools
+* Design, deploy, and generate documentation for your API using standard OpenAPI tools
 * Consistent client interfaces allow for a set of standard tooling to be built to support common use cases
   like `retry` and authentication.
 * Payloads can be encoded in any format (like ProtoBuf, MessagePack, Thrift, etc.)
