@@ -30,11 +30,12 @@ development of APIs without compromising on error handling consistency, performa
     "message": "Hello, John Wick"
 }
 ```
-#### Who is using DUH style RPC?
+#### Who is using RPC style APIs in production?
 - Slack API - Take a look at the [Slack API Methods](https://docs.slack.dev/reference/methods)
+- Others (TODO)
 
 ## Quick Start
-The DUH-RPC cli tool uses OpenAPI and to build high-performance RPC-style HTTP endpoints
+The DUH-RPC cli tool uses OpenAPI to build high-performance RPC-style HTTP endpoints
 that easily rival or exceed the performance of other RPC frameworks
 
 Install the `duh` cli linter and generator
@@ -69,12 +70,8 @@ make test
 
 See the [DUH-RPC CLI](https://github.com/duh-rpc/duh-cli) repo for complete documentation on the DUH-RPC CLI.
 
-> NOTE: You don't need the CLI to follow the DUH-RPC style. The CLI is just a convenient way to generate
+> NOTE: You don't need the CLI to follow the RPC style. The CLI is just a convenient way to generate
 > boilerplate code and documentation.
-
-## When is DUH-RPC not appropriate?
-DUH-RPC, like most RPC APIs, is intended for service to service communication. It doesn't make sense to use
-DUH-RPC if your intended use case is users sharing links to be clicked. Eg.. https://www.google.com/search?q=rpc+api
 
 ## Why not GRPC?
 GRPC has consistent semantics like flow control, request cancellation, and error handling. However, it is
@@ -97,29 +94,64 @@ of RPC or for performance reasons. In our experience, REST is suboptimal for a f
 
 For a deeper dive on REST, see [Why not REST](docs/why-not-rest.md).
 
-### What's good about the DUH-RPC Spec
+## Why build DUH-RPC Style APIs?
 * Consistent error handling, which allows libraries and frameworks to handle errors uniformly.
 * Consistent RPC method naming, no need to second guess where in the hierarchy the operation should exist.
 * You can use the same endpoints and frameworks for both private and public-facing APIs, with no need to have separate
   tooling for each.
-* Keeps the good parts of REST: stateless, cacheable, intermediates, security
-* The API can be interrogated from the command line via curl without the need for a special client.
-* The API can be inspected and called from GUI clients like [Postman](https://www.postman.com/),
+* The RPC calls can be interrogated from the command line via curl without the need for a special client.
+* The RPC calls can be inspected and called from GUI clients like [Postman](https://www.postman.com/),
   or [hoppscotch](https://github.com/hoppscotch/hoppscotch)
 * Use standard schema linting tools and OpenAPI-based services for integration and compliance testing of APIs
 * Design, deploy, and generate documentation for your API using standard OpenAPI tools
 * Consistent client interfaces allow for a set of standard tooling to be built to support common use cases
   like `retry` and authentication.
-* Payloads can be encoded in any format (like ProtoBuf, MessagePack, Thrift, etc.)
+* Payloads can be encoded in any format (like ProtoBuf/JSON, MessagePack, Thrift, etc.)
 
+## DUH-RPC Style in a Nutshell
+DUH-RPC is a simple RPC-over-HTTP spec using POST-only endpoints.
 
-## The DUH-RPC Spec
-You can read all the details of the spec [here](docs/spec.md).
+1. **RPC style path Format**: `/v1/{subject}.{method}`
+   - Example: `/v1/users.create`, `/v2/user.get`, `/v1/users.list`
+   - Version is major only (v0, v1, v2, etc.)
+   - Subject and method: lowercase letters, digits, hyphens, underscores
+2. **POST Only** - All operations use POST, even reads
+   - No GET, PUT, DELETE, PATCH
+3. **Request Body Required**
+   - All input data goes in the body
+   - No query parameters allowed
+4. **Content Types**
+   - application/json
+   - application/protobuf
+5. **Status Codes** - Only these are allowed:
+   - 2xx: 200 only
+   - 4xx: 400, 401, 403, 429, 452-455
+   - 5xx: 500 only
+6. **Success Response** - All operations MUST define a 200 response with content
+7. **Consistent Error Schema** - All error responses follow a similar schema:
+```json
+{ 
+    "code": 2404,
+    "message": "this is the error message",
+    "details": {  # optional key-value pairs
+        "url": "https://example.com/docs/errors/2404"
+        "subcode": "1012.1"
+    }
+}
+```
 
-## Existing RPC Options
-There are already plenty of frameworks to choose from:
-* GRPC
-* https://dubbo.apache.org
-* [GRPC Web](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md)
-* [DRPC](https://github.com/storj/drpc)
+#### DUH-RPC is:
 
+- Simple: Fixed conventions eliminate design decisions
+- RPC-style: Method calls, not resource manipulation
+- Type-safe: Works well with code generation
+- Consistent: All operations follow the same pattern
+
+## When is DUH-RPC not appropriate?
+DUH-RPC, like most RPC APIs, is intended for service to service communication. It doesn't make sense to use
+DUH-RPC if your intended use case is users sharing links to be clicked. Eg.. https://www.google.com/search?q=rpc+api
+
+## The Full DUH-RPC Spec
+You can read the full spec [here](docs/spec.md).
+
+*Psst: You don't need to follow the spec, JUST use HTTP and build an RPC style API!*
