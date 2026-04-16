@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.7'
+          go-version: '1.25.9'
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -40,6 +40,12 @@ jobs:
             curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ~/go/bin v2.5.0
           fi
           echo "~/go/bin" >> $GITHUB_PATH
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: './go.mod'
+          check-latest: true
 
       - name: Run CI
         run: make ci
