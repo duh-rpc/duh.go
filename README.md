@@ -42,7 +42,7 @@ that easily rival or exceed the performance of other RPC frameworks
 
 Install the `duh` cli linter and generator
 ```bash
-go install github.com/duh-cli/duh-cli@latest
+go install github.com/duh-rpc/duh-cli/cmd/duh@latest
 ```
 
 Get a DUH-RPC service up and running in minutes:
