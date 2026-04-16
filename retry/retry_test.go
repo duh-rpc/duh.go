@@ -378,9 +378,9 @@ type testError struct {
 	httpCode int
 }
 
-func (t testError) ProtoMessage() proto.Message    { return nil }
-func (t testError) Details() map[string]string      { return t.details }
-func (t testError) Error() string                   { return "" }
-func (t testError) Message() string                 { return "" }
-func (t testError) Code() string                    { return t.code }
-func (t testError) HTTPCode() int                   { return t.httpCode }
+func (t testError) ProtoMessage() proto.Message { return nil }
+func (t testError) Details() map[string]string  { return t.details }
+func (t testError) Error() string               { return "" }
+func (t testError) Message() string             { return "" }
+func (t testError) Code() string                { return t.code }
+func (t testError) HTTPCode() int               { return t.httpCode }

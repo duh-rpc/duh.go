@@ -31,7 +31,7 @@ import (
 const (
 	ContentTypeProtoBuf = "application/protobuf"
 	ContentTypeJSON     = "application/json"
-	ContentOctetStream = "application/octet-stream"
+	ContentOctetStream  = "application/octet-stream"
 )
 
 var (
