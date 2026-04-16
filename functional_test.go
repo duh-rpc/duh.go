@@ -204,7 +204,7 @@ func TestStreamingBadAcceptHeader(t *testing.T) {
 	req.Header.Set("Accept", duh.ContentTypeJSON)
 
 	// DoStream should return an error because the server returns a 400 Reply
-	sr, err := c.Client.DoStream(ctx, req)
+	sr, err := c.DoStream(ctx, req)
 	require.Error(t, err)
 	require.Nil(t, sr)
 
