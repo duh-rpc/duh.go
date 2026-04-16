@@ -16,7 +16,7 @@ package test
 
 import (
 	"context"
-	"github.com/duh-rpc/duh.go"
+	"github.com/duh-rpc/duh.go/v2"
 )
 
 // NewService creates a new service instance

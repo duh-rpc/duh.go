@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/duh-rpc/duh.go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"golang.org/x/net/http2"
 	json "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -96,14 +96,6 @@ var (
 // On 429 if the server provides a reset-time, DoWithRetry will calculate the appropriate retry time and
 // sleep until that time occurs or until the context is canceled.
 
-// DoOctetStream sends the request and expects a `application/octet-stream` response from the server.
-// If server doesn't respond with `application/octet-stream` then it is assumed to be an error of v1.Reply
-// If the reply isn't a v1.Reply then the body of the response is returned as an error.
-// TODO: Implement this and clean this up
-func (c *Client) DoOctetStream(req *http.Request, code *int, r io.ReadCloser) error {
-	return nil
-}
-
 // Do calls http.Client.Do() and un-marshals the response into the proto struct passed.
 // In the case of unexpected request or response errors, Do will return *duh.ClientError
 // with as much detail as possible.
@@ -128,7 +120,7 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 				DetailsHttpMethod: req.Method,
 				DetailsHttpStatus: resp.Status,
 			},
-			code: CodeTransportError,
+			code: CodeClientError,
 		}
 	}
 

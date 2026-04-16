@@ -1,4 +1,4 @@
-module github.com/duh-rpc/duh.go
+module github.com/duh-rpc/duh.go/v2
 
 go 1.24.7
 

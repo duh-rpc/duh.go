@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/duh-rpc/duh.go"
-	"github.com/duh-rpc/duh.go/internal/test"
+	"github.com/duh-rpc/duh.go/v2"
+	"github.com/duh-rpc/duh.go/v2/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -77,7 +77,7 @@ func TestClientErrors(t *testing.T) {
 		},
 		{
 			name:  "fail to read body of response",
-			error: "Transport Error: while reading response body: unexpected EOF",
+			error: "Client Error: while reading response body: unexpected EOF",
 			details: map[string]string{
 				duh.DetailsHttpUrl:    fmt.Sprintf("%s/v1/test.errors", server.URL),
 				duh.DetailsHttpMethod: "POST",
@@ -85,7 +85,7 @@ func TestClientErrors(t *testing.T) {
 			},
 			req:  &test.ErrorsRequest{Case: test.CaseClientIOError},
 			conf: test.ClientConfig{Endpoint: server.URL},
-			code: duh.CodeTransportError,
+			code: duh.CodeClientError,
 		},
 		{
 			name: "method not implemented",

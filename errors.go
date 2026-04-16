@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net/http"
 
-	v1 "github.com/duh-rpc/duh.go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -35,9 +35,8 @@ const (
 	CodeRequestFailed      = 453
 	CodeRetryRequest       = 454
 	CodeClientContentError = 455
-	CodeInternalError      = 500
-	CodeNotImplemented     = 501
-	CodeTransportError     = 512
+	CodeInternalError  = 500
+	CodeNotImplemented = 501
 )
 
 func CodeText(code int) string {
@@ -66,8 +65,6 @@ func CodeText(code int) string {
 		return "Internal Service Error"
 	case CodeNotImplemented:
 		return "Not Implemented"
-	case CodeTransportError:
-		return "Transport Error"
 	case CodeClientContentError:
 		return "Client Content Error"
 	default:
@@ -79,7 +76,7 @@ func IsDUHCode(code int) bool {
 	switch code {
 	case CodeOK, CodeBadRequest, CodeUnauthorized, CodeRequestFailed, CodeForbidden,
 		CodeNotFound, CodeConflict, CodeClientError, CodeTooManyRequests, CodeInternalError,
-		CodeNotImplemented, CodeTransportError, CodeClientContentError, CodeRetryRequest:
+		CodeNotImplemented, CodeClientContentError, CodeRetryRequest:
 		return true
 	}
 	return false

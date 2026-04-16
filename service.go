@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	v1 "github.com/duh-rpc/duh.go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	json "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"io"
@@ -29,8 +29,7 @@ import (
 const (
 	ContentTypeProtoBuf = "application/protobuf"
 	ContentTypeJSON     = "application/json"
-	ContentOctetStream  = "application/octet-stream"
-	contentPlainText    = "text/plain"
+	ContentOctetStream = "application/octet-stream"
 )
 
 var (
@@ -55,7 +54,7 @@ func ReadRequest(r *http.Request, m proto.Message, limit int64) error {
 		if errors.As(err, &e) {
 			return NewServiceError(e.Code(), fmt.Sprintf("request body %s", e.Message()), nil, nil)
 		}
-		return NewServiceError(CodeTransportError, "", err, nil)
+		return NewServiceError(CodeInternalError, "", err, nil)
 	}
 
 	// Ignore multiple mime types separated by comma ',' or mime type parameters separated by semicolon ';'
