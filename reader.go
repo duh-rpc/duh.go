@@ -2,9 +2,11 @@ package duh
 
 import (
 	"fmt"
-	v1 "github.com/duh-rpc/duh.go/proto/v1"
-	"google.golang.org/protobuf/proto"
 	"io"
+	"strconv"
+
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -52,14 +54,17 @@ type ErrDataLimitExceeded struct {
 
 func (e *ErrDataLimitExceeded) ProtoMessage() proto.Message {
 	return &v1.Reply{
-		CodeText: CodeText(CodeBadRequest),
-		Code:     CodeBadRequest,
-		Message:  e.Message(),
-		Details:  nil,
+		Code:    strconv.Itoa(CodeBadRequest),
+		Message: e.Message(),
+		Details: nil,
 	}
 }
 
-func (e *ErrDataLimitExceeded) Code() int {
+func (e *ErrDataLimitExceeded) Code() string {
+	return strconv.Itoa(CodeBadRequest)
+}
+
+func (e *ErrDataLimitExceeded) HTTPCode() int {
 	return CodeBadRequest
 }
 

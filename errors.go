@@ -18,8 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
-	v1 "github.com/duh-rpc/duh.go/proto/v1"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -37,7 +38,6 @@ const (
 	CodeClientContentError = 455
 	CodeInternalError      = 500
 	CodeNotImplemented     = 501
-	CodeTransportError     = 512
 )
 
 func CodeText(code int) string {
@@ -66,8 +66,6 @@ func CodeText(code int) string {
 		return "Internal Service Error"
 	case CodeNotImplemented:
 		return "Not Implemented"
-	case CodeTransportError:
-		return "Transport Error"
 	case CodeClientContentError:
 		return "Client Content Error"
 	default:
@@ -75,26 +73,18 @@ func CodeText(code int) string {
 	}
 }
 
-func IsDUHCode(code int) bool {
-	switch code {
-	case CodeOK, CodeBadRequest, CodeUnauthorized, CodeRequestFailed, CodeForbidden,
-		CodeNotFound, CodeConflict, CodeClientError, CodeTooManyRequests, CodeInternalError,
-		CodeNotImplemented, CodeTransportError, CodeClientContentError, CodeRetryRequest:
-		return true
-	}
-	return false
-}
-
 type Error interface {
-	// ProtoMessage Creates v1.Reply protobuf from this Error
+	// ProtoMessage creates v1.Reply protobuf from this Error
 	ProtoMessage() proto.Message
-	// Code is the code retrieved from v1.Reply.Code or the HTTP Status Code
-	Code() int
+	// Code returns the application-level code from the Reply body (e.g., "400", "CARD_DECLINED")
+	Code() string
+	// HTTPCode returns the HTTP status code as an integer
+	HTTPCode() int
 	// Error is the error message this error wrapped (Used on the server side)
 	Error() string
 	// Details is the Details of the error retrieved from v1.Reply.details
 	Details() map[string]string
-	// Message is the message retrieved from v1.Reply.Reply
+	// Message is the message retrieved from v1.Reply.Message
 	Message() string
 }
 
@@ -102,15 +92,22 @@ var _ Error = (*serviceError)(nil)
 var _ Error = (*ClientError)(nil)
 
 type serviceError struct {
-	details map[string]string
-	err     error
-	code    int
+	details  map[string]string
+	err      error
+	code     string
+	httpCode int
 }
 
 // NewServiceError returns a new serviceError.
 // Server Implementations should use this to respond to requests with an error.
-// TODO: Ensure you can get the `cause` of the error from serviceError struct
-func NewServiceError(code int, msg string, err error, details map[string]string) error {
+// The app code defaults to the string representation of httpCode (e.g., httpCode 400 -> Code() returns "400").
+func NewServiceError(httpCode int, msg string, err error, details map[string]string) error {
+	return NewServiceErrorWithCode(httpCode, strconv.Itoa(httpCode), msg, err, details)
+}
+
+// NewServiceErrorWithCode returns a new serviceError with a custom application-level code
+// independent of the HTTP status code (e.g., httpCode 453, code "CARD_DECLINED").
+func NewServiceErrorWithCode(httpCode int, code string, msg string, err error, details map[string]string) error {
 	if msg != "" {
 		if err != nil {
 			err = fmt.Errorf(msg, err)
@@ -119,9 +116,10 @@ func NewServiceError(code int, msg string, err error, details map[string]string)
 		}
 	}
 	return &serviceError{
-		details: details,
-		code:    code,
-		err:     err,
+		details:  details,
+		code:     code,
+		httpCode: httpCode,
+		err:      err,
 	}
 }
 
@@ -133,14 +131,17 @@ func (e *serviceError) ProtoMessage() proto.Message {
 			}
 			return ""
 		}(),
-		CodeText: CodeText(e.code),
-		Code:     int32(e.code),
-		Details:  e.details,
+		Code:    e.code,
+		Details: e.details,
 	}
 }
 
-func (e *serviceError) Code() int {
+func (e *serviceError) Code() string {
 	return e.code
+}
+
+func (e *serviceError) HTTPCode() int {
+	return e.httpCode
 }
 
 func (e *serviceError) Message() string {
@@ -148,20 +149,20 @@ func (e *serviceError) Message() string {
 }
 
 func (e *serviceError) Error() string {
-	return CodeText(e.code) + ":" + e.err.Error()
+	return CodeText(e.httpCode) + ":" + e.err.Error()
 }
 
 func (e *serviceError) Details() map[string]string {
 	return e.details
 }
 
-// TODO: Decide if this should be public or not, I'm leaning toward not being public
 type ClientError struct {
 	details      map[string]string
 	msg          string
 	err          error
 	isInfraError bool
-	code         int
+	code         string
+	httpCode     int
 }
 
 func (e *ClientError) ProtoMessage() proto.Message {
@@ -169,15 +170,22 @@ func (e *ClientError) ProtoMessage() proto.Message {
 		e.msg = e.err.Error()
 	}
 	return &v1.Reply{
-		CodeText: CodeText(e.code),
-		Code:     int32(e.code),
-		Details:  e.details,
-		Message:  e.msg,
+		Code:    e.code,
+		Details: e.details,
+		Message: e.msg,
 	}
 }
 
-func (e *ClientError) Code() int {
+func (e *ClientError) Code() string {
 	return e.code
+}
+
+func (e *ClientError) HTTPCode() int {
+	return e.httpCode
+}
+
+func (e *ClientError) IsInfraError() bool {
+	return e.isInfraError
 }
 
 func (e *ClientError) Message() string {
@@ -187,7 +195,7 @@ func (e *ClientError) Message() string {
 func (e *ClientError) Error() string {
 	// If e.err is set, it means this error is from the client
 	if e.err != nil {
-		return CodeText(e.code) + ": " + e.err.Error()
+		return CodeText(e.httpCode) + ": " + e.err.Error()
 	}
 
 	// This means the reply is not from the service, but from the infrastructure.
@@ -195,7 +203,7 @@ func (e *ClientError) Error() string {
 		return fmt.Sprintf("%s %s returned infrastructure error %d with body: %s",
 			e.details[DetailsHttpMethod],
 			e.details[DetailsHttpUrl],
-			e.code,
+			e.httpCode,
 			e.msg,
 		)
 	}
@@ -203,7 +211,7 @@ func (e *ClientError) Error() string {
 	return fmt.Sprintf("%s %s returned '%s' with message: %s",
 		e.details[DetailsHttpMethod],
 		e.details[DetailsHttpUrl],
-		CodeText(e.code),
+		CodeText(e.httpCode),
 		e.msg,
 	)
 }

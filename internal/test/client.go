@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/duh-rpc/duh.go"
+	"github.com/duh-rpc/duh.go/v2"
 	"google.golang.org/protobuf/proto"
 	"net/http"
 )

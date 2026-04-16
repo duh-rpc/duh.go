@@ -17,15 +17,19 @@ package retry_test
 import (
 	"context"
 	"errors"
-	"github.com/duh-rpc/duh.go"
-	"github.com/duh-rpc/duh.go/retry"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	duh "github.com/duh-rpc/duh.go/v2"
+	"github.com/duh-rpc/duh.go/v2/retry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 type DoThingRequest struct{}
@@ -54,11 +58,6 @@ func TestRetry(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// --- Retryable errors are ---
-	// 454 - Retry Request
-	// 429 - Too Many Requests (Will calculate the appropriate interval to retry based on the response)
-	// 500 - Internal Error (Hopefully this is a temporary error, and the server will recover)
-	// 502,503,504 - Infrastructure errors which hopefully will resolve on retry.
 
 	c.Err = errors.New("error")
 	c.Attempts = 10
@@ -95,13 +94,13 @@ func TestRetry(t *testing.T) {
 	})
 
 	t.Run("OnRetryable", func(t *testing.T) {
-		c.Err = &testError{code: duh.CodeRetryRequest}
+		c.Err = &testError{code: "454", httpCode: duh.CodeRetryRequest}
 		c.Attempts = 5
 		count = 0
 
-		// The `retry.OnRetryable` policy will retry only on 454 retry request or until success, using
-		// the default back off policy.
-		_ = retry.On(ctx, retry.OnRetryable, func(ctx context.Context, attempt int) error {
+		// The `duh.OnRetryable` policy will retry only on retryable service codes or
+		// infrastructure errors, using the default back off policy.
+		_ = retry.On(ctx, duh.OnRetryable, func(ctx context.Context, attempt int) error {
 			err := c.DoThing(ctx, &DoThingRequest{}, &resp)
 			if err != nil {
 				count++
@@ -113,8 +112,9 @@ func TestRetry(t *testing.T) {
 	})
 
 	t.Run("CustomPolicyBackoff", func(t *testing.T) {
+		// Service codes go in OnCodes, infra codes go in OnInfraCodes
 		customPolicy := retry.Policy{
-			OnCodes: []int{duh.CodeConflict, duh.CodeTooManyRequests, 502, 503, 504},
+			OnCodes: []int{duh.CodeConflict, duh.CodeTooManyRequests},
 			Interval: retry.BackOff{
 				Min:    time.Millisecond,
 				Max:    time.Millisecond * 100,
@@ -123,7 +123,7 @@ func TestRetry(t *testing.T) {
 			Attempts: 5,
 		}
 
-		c.Err = &testError{code: duh.CodeConflict}
+		c.Err = &testError{code: "409", httpCode: duh.CodeConflict}
 		c.Attempts = 10
 		count = 0
 
@@ -169,16 +169,218 @@ func TestRetry(t *testing.T) {
 		cancel()
 		wg.Wait()
 	})
+
+	t.Run("ServiceErrorInOnCodes", func(t *testing.T) {
+		// Service error with code in OnCodes should be retried
+		policy := retry.Policy{
+			OnCodes:  []int{duh.CodeTooManyRequests},
+			Interval: retry.Sleep(time.Millisecond),
+			Attempts: 3,
+		}
+
+		count = 0
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return &testError{code: "429", httpCode: duh.CodeTooManyRequests}
+		})
+		require.Error(t, err)
+		assert.Equal(t, 3, count)
+	})
+
+	t.Run("ServiceErrorNotInOnCodes", func(t *testing.T) {
+		// Service error with code NOT in OnCodes should not be retried
+		policy := retry.Policy{
+			OnCodes:  []int{duh.CodeTooManyRequests},
+			Interval: retry.Sleep(time.Millisecond),
+			Attempts: 3,
+		}
+
+		count = 0
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return &testError{code: "400", httpCode: duh.CodeBadRequest}
+		})
+		require.Error(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("InfraErrorInOnInfraCodes", func(t *testing.T) {
+		// Infra error with code in OnInfraCodes should be retried
+		policy := retry.Policy{
+			OnCodes:      []int{duh.CodeTooManyRequests},
+			OnInfraCodes: []int{502, 503, 504},
+			Interval:     retry.Sleep(time.Millisecond),
+			Attempts:     3,
+		}
+
+		infraErr := makeInfraError(t, 503)
+		count = 0
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return infraErr
+		})
+		require.Error(t, err)
+		assert.Equal(t, 3, count)
+	})
+
+	t.Run("InfraErrorNotInOnInfraCodes", func(t *testing.T) {
+		// Infra error with code NOT in OnInfraCodes should not be retried
+		policy := retry.Policy{
+			OnCodes:      []int{duh.CodeTooManyRequests},
+			OnInfraCodes: []int{502, 503, 504},
+			Interval:     retry.Sleep(time.Millisecond),
+			Attempts:     3,
+		}
+
+		infraErr := makeInfraError(t, 401)
+		count = 0
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return infraErr
+		})
+		require.Error(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("InfraErrorNilOnInfraCodes", func(t *testing.T) {
+		// Infra error with nil OnInfraCodes should not be retried
+		policy := retry.Policy{
+			OnCodes:  []int{duh.CodeTooManyRequests},
+			Interval: retry.Sleep(time.Millisecond),
+			Attempts: 3,
+		}
+
+		infraErr := makeInfraError(t, 503)
+		count = 0
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return infraErr
+		})
+		require.Error(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("RateLimitResetDetail", func(t *testing.T) {
+		// 429 error with ratelimit-reset detail should use that duration instead of backoff
+		policy := retry.Policy{
+			OnCodes: []int{duh.CodeTooManyRequests},
+			Interval: retry.BackOff{
+				Min:    5 * time.Second,
+				Max:    10 * time.Second,
+				Factor: 2,
+			},
+			Attempts: 2,
+		}
+
+		count = 0
+		start := time.Now()
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return &testError{
+				code:     "429",
+				httpCode: duh.CodeTooManyRequests,
+				details:  map[string]string{"ratelimit-reset": "0.01"},
+			}
+		})
+		elapsed := time.Since(start)
+		require.Error(t, err)
+		assert.Equal(t, 2, count)
+		// Should have used the 10ms rate-limit duration, not the 5s backoff
+		assert.Less(t, elapsed, time.Second)
+	})
+
+	t.Run("RetryAfterDetail", func(t *testing.T) {
+		// 429 error with http.retry-after detail should use that duration
+		policy := retry.Policy{
+			OnCodes: []int{duh.CodeTooManyRequests},
+			Interval: retry.BackOff{
+				Min:    5 * time.Second,
+				Max:    10 * time.Second,
+				Factor: 2,
+			},
+			Attempts: 2,
+		}
+
+		count = 0
+		start := time.Now()
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			count++
+			return &testError{
+				code:     "429",
+				httpCode: duh.CodeTooManyRequests,
+				details:  map[string]string{"http.retry-after": "0.01"},
+			}
+		})
+		elapsed := time.Since(start)
+		require.Error(t, err)
+		assert.Equal(t, 2, count)
+		// Should have used the 10ms retry-after duration, not the 5s backoff
+		assert.Less(t, elapsed, time.Second)
+	})
+
+	t.Run("BackoffProgression", func(t *testing.T) {
+		// Verify that backoff values actually increase across attempts (regression test for bug fix)
+		backoff := retry.BackOff{
+			Min:    time.Millisecond,
+			Max:    time.Second,
+			Factor: 2,
+		}
+
+		d1 := backoff.Next(1)
+		d2 := backoff.Next(2)
+		d3 := backoff.Next(3)
+
+		// Each successive attempt should produce a longer duration
+		assert.Less(t, d1, d2)
+		assert.Less(t, d2, d3)
+
+		// Verify the actual progression: Min * Factor^attempt
+		assert.Equal(t, 2*time.Millisecond, d1)
+		assert.Equal(t, 4*time.Millisecond, d2)
+		assert.Equal(t, 8*time.Millisecond, d3)
+	})
+
+	t.Run("BackoffBugFixVerification", func(t *testing.T) {
+		// Verify the On() function actually increases sleep duration across attempts.
+		// The old bug passed p.Attempts (static) instead of attempt (incrementing).
+		var attempts []int
+		policy := retry.Policy{
+			Interval: retry.Sleep(time.Millisecond),
+			Attempts: 4,
+		}
+
+		err := retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			attempts = append(attempts, attempt)
+			return errors.New("always fail")
+		})
+		require.Error(t, err)
+		// Verify attempts increased: 1, 2, 3, 4
+		assert.Equal(t, []int{1, 2, 3, 4}, attempts)
+	})
+}
+
+// makeInfraError creates a *duh.ClientError with IsInfraError() == true by using duh.NewInfraError
+// with a test HTTP response.
+func makeInfraError(t *testing.T, statusCode int) error {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	resp := &http.Response{
+		StatusCode: statusCode,
+		Status:     strconv.Itoa(statusCode) + " " + http.StatusText(statusCode),
+		Header:     http.Header{},
+	}
+	return duh.NewInfraError(req, resp, []byte("infra error body"))
 }
 
 type testError struct {
-	code int
+	details  map[string]string
+	code     string
+	httpCode int
 }
 
 func (t testError) ProtoMessage() proto.Message { return nil }
-func (t testError) Details() map[string]string  { return nil }
+func (t testError) Details() map[string]string  { return t.details }
 func (t testError) Error() string               { return "" }
 func (t testError) Message() string             { return "" }
-func (t testError) Code() int {
-	return t.code
-}
+func (t testError) Code() string                { return t.code }
+func (t testError) HTTPCode() int               { return t.httpCode }

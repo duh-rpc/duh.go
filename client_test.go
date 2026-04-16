@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/duh-rpc/duh.go"
-	"github.com/duh-rpc/duh.go/internal/test"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/duh-rpc/duh.go/v2"
+	"github.com/duh-rpc/duh.go/v2/internal/test"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type badTransport struct {
@@ -31,37 +32,39 @@ func TestClientErrors(t *testing.T) {
 	defer cancel()
 
 	for _, tt := range []struct {
-		req     *test.ErrorsRequest
-		details map[string]string
-		conf    test.ClientConfig
-		error   string
-		name    string
-		msg     string
-		code    int
+		req      *test.ErrorsRequest
+		details  map[string]string
+		conf     test.ClientConfig
+		error    string
+		name     string
+		msg      string
+		code     string
+		httpCode int
 	}{
 		{
-			name:  "fail to marshal protobuf request",
-			error: "Client Error: while marshaling request payload: string field contains invalid UTF-8",
-			conf:  test.ClientConfig{Endpoint: server.URL},
-			req: &test.ErrorsRequest{
-				Case: string([]byte{0x80, 0x81}),
-			},
-			code: duh.CodeClientError,
+			name:     "fail to marshal protobuf request",
+			error:    "Client Error: while marshaling request payload: string field contains invalid UTF-8",
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			req:      &test.ErrorsRequest{Case: string([]byte{0x80, 0x81})},
+			code:     "452",
+			httpCode: duh.CodeClientError,
 		},
 		{
-			name:  "fail to create request",
-			error: "Client Error: net/http: invalid method \"invalid method\"",
-			conf:  test.ClientConfig{Endpoint: ""},
-			req:   &test.ErrorsRequest{Case: test.CaseInvalidMethod},
-			code:  duh.CodeClientError,
+			name:     "fail to create request",
+			error:    "Client Error: net/http: invalid method \"invalid method\"",
+			conf:     test.ClientConfig{Endpoint: ""},
+			req:      &test.ErrorsRequest{Case: test.CaseInvalidMethod},
+			code:     "452",
+			httpCode: duh.CodeClientError,
 		},
 		{
-			name:    "fail to create send request",
-			error:   "Client Error: during client.Do(): Post \"/v1/test.errors\": unsupported protocol scheme \"\"",
-			details: map[string]string{"http.method": "POST", "http.url": "/v1/test.errors"},
-			conf:    test.ClientConfig{Endpoint: ""},
-			req:     &test.ErrorsRequest{},
-			code:    duh.CodeClientError,
+			name:     "fail to create send request",
+			error:    "Client Error: during client.Do(): Post \"/v1/test.errors\": unsupported protocol scheme \"\"",
+			details:  map[string]string{"http.method": "POST", "http.url": "/v1/test.errors"},
+			conf:     test.ClientConfig{Endpoint: ""},
+			req:      &test.ErrorsRequest{},
+			code:     "452",
+			httpCode: duh.CodeClientError,
 		},
 		{
 			name: "fail to create request",
@@ -71,21 +74,23 @@ func TestClientErrors(t *testing.T) {
 				duh.DetailsHttpUrl:    fmt.Sprintf("%s/v1/test.errors", server.URL),
 				duh.DetailsHttpMethod: "POST",
 			},
-			conf: test.ClientConfig{Endpoint: server.URL, Client: &badTransportClient},
-			req:  &test.ErrorsRequest{},
-			code: duh.CodeClientError,
+			conf:     test.ClientConfig{Endpoint: server.URL, Client: &badTransportClient},
+			req:      &test.ErrorsRequest{},
+			code:     "452",
+			httpCode: duh.CodeClientError,
 		},
 		{
 			name:  "fail to read body of response",
-			error: "Transport Error: while reading response body: unexpected EOF",
+			error: "Client Error: while reading response body: unexpected EOF",
 			details: map[string]string{
 				duh.DetailsHttpUrl:    fmt.Sprintf("%s/v1/test.errors", server.URL),
 				duh.DetailsHttpMethod: "POST",
 				duh.DetailsHttpStatus: "200 OK",
 			},
-			req:  &test.ErrorsRequest{Case: test.CaseClientIOError},
-			conf: test.ClientConfig{Endpoint: server.URL},
-			code: duh.CodeTransportError,
+			req:      &test.ErrorsRequest{Case: test.CaseClientIOError},
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			code:     "452",
+			httpCode: duh.CodeClientError,
 		},
 		{
 			name: "method not implemented",
@@ -97,9 +102,10 @@ func TestClientErrors(t *testing.T) {
 				duh.DetailsCodeText:   "Not Implemented",
 				duh.DetailsHttpMethod: "POST",
 			},
-			req:  &test.ErrorsRequest{Case: test.CaseNotImplemented},
-			conf: test.ClientConfig{Endpoint: server.URL},
-			code: duh.CodeNotImplemented,
+			req:      &test.ErrorsRequest{Case: test.CaseNotImplemented},
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			code:     "501",
+			httpCode: duh.CodeNotImplemented,
 		},
 		{
 			name: "infrastructure error",
@@ -111,9 +117,10 @@ func TestClientErrors(t *testing.T) {
 				duh.DetailsHttpStatus: "404 Not Found",
 				duh.DetailsHttpMethod: "POST",
 			},
-			req:  &test.ErrorsRequest{Case: test.CaseInfrastructureError},
-			conf: test.ClientConfig{Endpoint: server.URL},
-			code: http.StatusNotFound,
+			req:      &test.ErrorsRequest{Case: test.CaseInfrastructureError},
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			code:     "404",
+			httpCode: http.StatusNotFound,
 		},
 		{
 			name: "service returned an error",
@@ -125,9 +132,10 @@ func TestClientErrors(t *testing.T) {
 				duh.DetailsCodeText:   "Internal Service Error",
 				duh.DetailsHttpMethod: "POST",
 			},
-			req:  &test.ErrorsRequest{Case: test.CaseServiceReturnedError},
-			conf: test.ClientConfig{Endpoint: server.URL},
-			code: http.StatusInternalServerError,
+			req:      &test.ErrorsRequest{Case: test.CaseServiceReturnedError},
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			code:     "500",
+			httpCode: http.StatusInternalServerError,
 		},
 		{
 			name: "service returned client content error",
@@ -139,9 +147,10 @@ func TestClientErrors(t *testing.T) {
 				duh.DetailsCodeText:   "Client Content Error",
 				duh.DetailsHttpMethod: "POST",
 			},
-			req:  &test.ErrorsRequest{Case: test.CaseContentTypeError},
-			conf: test.ClientConfig{Endpoint: server.URL},
-			code: duh.CodeClientContentError,
+			req:      &test.ErrorsRequest{Case: test.CaseContentTypeError},
+			conf:     test.ClientConfig{Endpoint: server.URL},
+			code:     "455",
+			httpCode: duh.CodeClientContentError,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,10 +161,48 @@ func TestClientErrors(t *testing.T) {
 			assert.Contains(t, e.Error(), tt.error)
 			assert.Contains(t, e.Message(), tt.msg)
 			assert.Equal(t, tt.code, e.Code())
+			assert.Equal(t, tt.httpCode, e.HTTPCode())
 			for k, v := range tt.details {
 				require.Contains(t, e.Details(), k)
 				assert.Contains(t, e.Details()[k], v)
 			}
 		})
 	}
+}
+
+func TestClientErrorIsInfraError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("bad gateway"))
+	}))
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/test", nil)
+	require.NoError(t, err)
+
+	err = c.Do(req, nil)
+	require.Error(t, err)
+
+	var ce *duh.ClientError
+	require.True(t, errors.As(err, &ce))
+	assert.True(t, ce.IsInfraError())
+	assert.Equal(t, "502", ce.Code())
+	assert.Equal(t, http.StatusBadGateway, ce.HTTPCode())
+}
+
+func TestErrorInterface(t *testing.T) {
+	// Service error: Code() returns string representation of HTTP code
+	err := duh.NewServiceError(duh.CodeBadRequest, "invalid input", nil, nil)
+	var e duh.Error
+	require.True(t, errors.As(err, &e))
+	assert.Equal(t, "400", e.Code())
+	assert.Equal(t, duh.CodeBadRequest, e.HTTPCode())
+
+	// Service error with custom code
+	err = duh.NewServiceErrorWithCode(duh.CodeRequestFailed, "CARD_DECLINED", "card was declined", nil, nil)
+	require.True(t, errors.As(err, &e))
+	assert.Equal(t, "CARD_DECLINED", e.Code())
+	assert.Equal(t, duh.CodeRequestFailed, e.HTTPCode())
+	assert.Equal(t, "Request Failed:card was declined", e.Error())
 }

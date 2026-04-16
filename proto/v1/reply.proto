@@ -16,11 +16,11 @@ syntax = "proto3";
 
 package duh.v1;
 
-option go_package = "github.com/duh-rpc/duh.go/proto/v1";
+option go_package = "github.com/duh-rpc/duh.go/v2/proto/v1";
 
 message Reply {
-    int32 code = 1;
-    string codeText = 2 [json_name = "code_text"];
+    string code = 1;
+    // field 2 removed (was codeText)
     string message = 3;
     map<string, string> details = 4;
 }
