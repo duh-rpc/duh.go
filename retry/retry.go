@@ -17,12 +17,34 @@ package retry
 import (
 	"context"
 	"errors"
-	"github.com/duh-rpc/duh.go/v2"
 	"math"
 	"math/rand"
-	"net/http"
 	"slices"
+	"strconv"
 	"time"
+)
+
+// httpCoder is satisfied by any error that carries an HTTP status code.
+// duh.Error and *duh.ClientError satisfy this via HTTPCode() int.
+type httpCoder interface {
+	HTTPCode() int
+}
+
+// infraChecker is satisfied by errors that can report infrastructure origin.
+// *duh.ClientError satisfies this via IsInfraError() bool.
+type infraChecker interface {
+	IsInfraError() bool
+}
+
+// detailer is satisfied by errors that carry a details map.
+// duh.Error satisfies this via Details() map[string]string.
+type detailer interface {
+	Details() map[string]string
+}
+
+const (
+	detailRateLimitReset = "ratelimit-reset"
+	detailRetryAfter     = "http.retry-after"
 )
 
 type Interval interface {
@@ -59,10 +81,6 @@ var DefaultBackOff = BackOff{
 	Factor: 2,
 }
 
-// RetryableCodes is a list of duh return codes which are retryable.
-var RetryableCodes = []int{duh.CodeRetryRequest, duh.CodeTooManyRequests, duh.CodeInternalError,
-	http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}
-
 type Sleep time.Duration
 
 func (s Sleep) Next(_ int) time.Duration {
@@ -89,9 +107,13 @@ type Policy struct {
 	//	}
 	//
 	Interval Interval // BackOff or Sleep
-	// OnCodes is a list of codes which will cause a retry. If an error occurs which is not an implementation
-	// of duh.Error and OnCodes then a retry will NOT occur.
+	// OnCodes is a list of service response codes that trigger retry. These are checked
+	// via HTTPCode() when the error is NOT an infrastructure error.
 	OnCodes []int
+	// OnInfraCodes is a list of infrastructure response codes that trigger retry. These are
+	// checked via HTTPCode() when IsInfraError() returns true.
+	// A nil value means infrastructure errors are NOT retried.
+	OnInfraCodes []int
 	// Attempts is the number of "attempts" before retry returns an error to the caller.
 	// Attempts includes the first attempt, it is a count of the number of "total attempts" that
 	// will be attempted.
@@ -109,29 +131,61 @@ var UntilSuccess = Policy{
 	Attempts: 0,
 }
 
-// OnRetryable is intended to be used by clients interacting with a duh rpc service. It will retry
-// indefinitely as long as the service returns a retryable error. Users who which to cancel the indefinite retry
-// should cancel the context.
-var OnRetryable = Policy{
-	Interval: DefaultBackOff,
-	OnCodes:  RetryableCodes,
-	Attempts: 0,
-}
-
 func shouldRetry(err error, policy Policy) bool {
 	if err == nil {
 		panic("err cannot be nil")
 	}
 
-	if policy.OnCodes != nil {
-		var duhErr duh.Error
-		if errors.As(err, &duhErr) {
-			return slices.Contains(policy.OnCodes, duhErr.HTTPCode())
-		}
-	} else {
+	// If no codes are specified, retry any error
+	if policy.OnCodes == nil && policy.OnInfraCodes == nil {
 		return true
 	}
+
+	// Extract the HTTP status code from the error
+	var hc httpCoder
+	if !errors.As(err, &hc) {
+		return false
+	}
+
+	// Check if this is an infrastructure error
+	var ic infraChecker
+	if errors.As(err, &ic) && ic.IsInfraError() {
+		if policy.OnInfraCodes != nil {
+			return slices.Contains(policy.OnInfraCodes, hc.HTTPCode())
+		}
+		return false
+	}
+
+	// Service error (or non-ClientError with HTTPCode)
+	if policy.OnCodes != nil {
+		return slices.Contains(policy.OnCodes, hc.HTTPCode())
+	}
 	return false
+}
+
+// rateLimitDuration extracts a rate-limit sleep duration from the error's details.
+// Returns 0 if no rate-limit information is available.
+func rateLimitDuration(err error) time.Duration {
+	var d detailer
+	if !errors.As(err, &d) {
+		return 0
+	}
+
+	details := d.Details()
+	if details == nil {
+		return 0
+	}
+
+	// Check for ratelimit-reset or http.retry-after
+	for _, key := range []string{detailRateLimitReset, detailRetryAfter} {
+		if v, ok := details[key]; ok {
+			seconds, parseErr := strconv.ParseFloat(v, 64)
+			if parseErr == nil && seconds > 0 {
+				return time.Duration(seconds * float64(time.Second))
+			}
+		}
+	}
+	return 0
 }
 
 func On(ctx context.Context, p Policy, operation func(context.Context, int) error) error {
@@ -151,7 +205,12 @@ func On(ctx context.Context, p Policy, operation func(context.Context, int) erro
 			}
 
 			if shouldRetry(err, p) {
-				time.Sleep(p.Interval.Next(p.Attempts))
+				// Use rate-limit duration if available, otherwise use backoff
+				sleepDur := rateLimitDuration(err)
+				if sleepDur == 0 {
+					sleepDur = p.Interval.Next(attempt)
+				}
+				time.Sleep(sleepDur)
 				attempt++
 			} else {
 				return err
