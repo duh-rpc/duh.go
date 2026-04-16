@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/duh-rpc/duh.go/v2"
-	"google.golang.org/protobuf/proto"
 	"net/http"
+
+	"github.com/duh-rpc/duh.go/v2"
+	json "google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // Client is a simple client that calls the Service
@@ -44,6 +46,24 @@ func NewClient(conf ClientConfig) *Client {
 		},
 		endpoint: conf.Endpoint,
 	}
+}
+
+// TestStream sends a streaming request and returns a StreamReader.
+func (c *Client) TestStream(ctx context.Context, req *StreamRequest) (duh.StreamReader, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, duh.NewClientError("while marshaling request payload: %w", err, nil)
+	}
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/%s", c.endpoint, "v1/test.stream"), bytes.NewReader(payload))
+	if err != nil {
+		return nil, duh.NewClientError("", err, nil)
+	}
+
+	r.Header.Set("Content-Type", duh.ContentTypeJSON)
+	r.Header.Set("Accept", duh.ContentStreamJSON)
+	return c.DoStream(ctx, r)
 }
 
 // TestErrors is used in test suite to test error handling

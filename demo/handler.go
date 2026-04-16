@@ -47,6 +47,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/render.pixel":
 		h.handleRenderPixel(w, r)
 		return
+	case "/v1/events.list":
+		duh.HandleStream(w, r, h.listEvents)
+		return
+	case "/v1/bytes.download":
+		h.handleDownloadBytes(w, r)
+		return
 	}
 	duh.ReplyWithCode(w, r, duh.CodeNotImplemented, nil, "no such method; "+r.URL.Path)
 }
@@ -64,6 +70,32 @@ func (h *Handler) handleSayHello(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	duh.Reply(w, r, duh.CodeOK, &resp)
+}
+
+func (h *Handler) listEvents(r *http.Request, stream duh.StreamWriter) error {
+	var req ListEventsRequest
+	if err := duh.ReadRequest(r, &req, 5*duh.MegaByte); err != nil {
+		return err
+	}
+
+	events, err := h.Service.ListEvents(r.Context(), &req)
+	if err != nil {
+		return err
+	}
+
+	for _, event := range events {
+		if err := stream.Send(event); err != nil {
+			return err
+		}
+	}
+
+	return stream.Close(nil)
+}
+
+func (h *Handler) handleDownloadBytes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", duh.ContentOctetStream)
+	w.WriteHeader(duh.CodeOK)
+	_, _ = w.Write([]byte("hello, bytes"))
 }
 
 func (h *Handler) handleRenderPixel(w http.ResponseWriter, r *http.Request) {

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/duh-rpc/duh.go/v2"
@@ -66,6 +67,36 @@ func (c *Client) SayHello(ctx context.Context, req *SayHelloRequest, resp *SayHe
 
 	// Do() will handle content negotiation, error handling, and un-marshal the response
 	return c.Do(r, resp)
+}
+
+// ListEvents sends a streaming request to the service which returns a stream of events.
+func (c *Client) ListEvents(ctx context.Context, req *ListEventsRequest) (duh.StreamReader, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, duh.NewClientError("while marshaling request payload: %w", err, nil)
+	}
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/%s", c.endpoint, "v1/events.list"), bytes.NewReader(payload))
+	if err != nil {
+		return nil, duh.NewClientError("", err, nil)
+	}
+
+	r.Header.Set("Content-Type", duh.ContentTypeJSON)
+	r.Header.Set("Accept", duh.ContentStreamJSON)
+	return c.DoStream(ctx, r)
+}
+
+// DownloadBytes demonstrates DoBytes by downloading an unstructured byte stream.
+func (c *Client) DownloadBytes(ctx context.Context) (io.ReadCloser, error) {
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/%s", c.endpoint, "v1/bytes.download"), nil)
+	if err != nil {
+		return nil, duh.NewClientError("", err, nil)
+	}
+
+	r.Header.Set("Accept", duh.ContentOctetStream)
+	return c.DoBytes(ctx, r)
 }
 
 // RenderPixel sends a request to the service which calculates the pixel color of a Mandelbrot
