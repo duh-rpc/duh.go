@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,12 +38,13 @@ type Client struct {
 }
 
 const (
-	DetailsHttpCode   = "http.code"
-	DetailsHttpUrl    = "http.url"
-	DetailsHttpMethod = "http.method"
-	DetailsHttpStatus = "http.status"
-	DetailsHttpBody   = "http.body"
-	DetailsCodeText   = "duh.code-text"
+	DetailsHttpCode       = "http.code"
+	DetailsHttpUrl        = "http.url"
+	DetailsHttpMethod     = "http.method"
+	DetailsHttpStatus     = "http.status"
+	DetailsHttpBody       = "http.body"
+	DetailsCodeText       = "duh.code-text"
+	DetailsHttpRetryAfter = "http.retry-after"
 )
 
 var (
@@ -83,19 +85,6 @@ var (
 	}
 )
 
-// TODO: Move this documentation to retry.UntilSuccess
-// DoWithRetry is identical to Do() except it will retry using the default retry.UntilSuccess which
-// will retry all requests that return one of the following status codes.
-//
-//	500 - Internal Error
-//	502 - Bad Gateway
-//	503 - Service Unavailable
-//	505 - Gateway Timeout
-//	429 - Too Many Requests
-//
-// On 429 if the server provides a reset-time, DoWithRetry will calculate the appropriate retry time and
-// sleep until that time occurs or until the context is canceled.
-
 // Do calls http.Client.Do() and un-marshals the response into the proto struct passed.
 // In the case of unexpected request or response errors, Do will return *duh.ClientError
 // with as much detail as possible.
@@ -120,14 +109,9 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 				DetailsHttpMethod: req.Method,
 				DetailsHttpStatus: resp.Status,
 			},
-			code: CodeClientError,
+			code:     strconv.Itoa(CodeClientError),
+			httpCode: CodeClientError,
 		}
-	}
-
-	// If we get a code that is not a known DUH code, then don't attempt to un-marshal,
-	// instead read the body and return an error
-	if !IsDUHCode(resp.StatusCode) {
-		return NewInfraError(req, resp, body.Bytes())
 	}
 
 	// Handle content negotiation and un-marshal the response
@@ -154,7 +138,7 @@ func (c *Client) handleJSONResponse(req *http.Request, resp *http.Response, body
 	}
 
 	if err := json.Unmarshal(body, out); err != nil {
-		return NewServiceError(CodeClientError,
+		return NewClientError(
 			"", fmt.Errorf("while parsing response body '%s': %w", body, err), nil)
 	}
 	return nil
@@ -170,7 +154,7 @@ func (c *Client) handleProtobufResponse(req *http.Request, resp *http.Response, 
 	}
 
 	if err := proto.Unmarshal(body, out); err != nil {
-		return NewServiceError(CodeClientError,
+		return NewClientError(
 			"", fmt.Errorf("while parsing response body '%s': %w", body, err), nil)
 	}
 	return nil
@@ -193,12 +177,18 @@ func NewReplyError(req *http.Request, resp *http.Response, reply *v1.Reply) erro
 		details[k] = v
 	}
 
-	// TODO: Handle CodeTooManyRequests, include a way to easily get those retry values
-	//  so retry.On() can get them.
+	// Extract Retry-After header on 429 responses
+	if resp.StatusCode == CodeTooManyRequests {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			details[DetailsHttpRetryAfter] = ra
+		}
+	}
+
 	return &ClientError{
-		code:    int(reply.Code),
-		msg:     reply.Message,
-		details: details,
+		code:     reply.Code,
+		httpCode: resp.StatusCode,
+		msg:      reply.Message,
+		details:  details,
 	}
 }
 
@@ -214,7 +204,8 @@ func NewInfraError(req *http.Request, resp *http.Response, body []byte) error {
 			DetailsHttpMethod: req.Method,
 		},
 		msg:          string(body),
-		code:         resp.StatusCode,
+		code:         strconv.Itoa(resp.StatusCode),
+		httpCode:     resp.StatusCode,
 		isInfraError: true,
 	}
 }
@@ -230,8 +221,9 @@ func NewClientError(msg string, err error, details map[string]string) error {
 		}
 	}
 	return &ClientError{
-		code:    CodeClientError,
-		details: details,
-		err:     err,
+		code:     strconv.Itoa(CodeClientError),
+		httpCode: CodeClientError,
+		details:  details,
+		err:      err,
 	}
 }

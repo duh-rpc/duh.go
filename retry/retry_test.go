@@ -95,7 +95,7 @@ func TestRetry(t *testing.T) {
 	})
 
 	t.Run("OnRetryable", func(t *testing.T) {
-		c.Err = &testError{code: duh.CodeRetryRequest}
+		c.Err = &testError{code: "454", httpCode: duh.CodeRetryRequest}
 		c.Attempts = 5
 		count = 0
 
@@ -123,7 +123,7 @@ func TestRetry(t *testing.T) {
 			Attempts: 5,
 		}
 
-		c.Err = &testError{code: duh.CodeConflict}
+		c.Err = &testError{code: "409", httpCode: duh.CodeConflict}
 		c.Attempts = 10
 		count = 0
 
@@ -172,13 +172,13 @@ func TestRetry(t *testing.T) {
 }
 
 type testError struct {
-	code int
+	code     string
+	httpCode int
 }
 
 func (t testError) ProtoMessage() proto.Message { return nil }
 func (t testError) Details() map[string]string  { return nil }
 func (t testError) Error() string               { return "" }
 func (t testError) Message() string             { return "" }
-func (t testError) Code() int {
-	return t.code
-}
+func (t testError) Code() string                { return t.code }
+func (t testError) HTTPCode() int               { return t.httpCode }

@@ -126,7 +126,7 @@ func shouldRetry(err error, policy Policy) bool {
 	if policy.OnCodes != nil {
 		var duhErr duh.Error
 		if errors.As(err, &duhErr) {
-			return slices.Contains(policy.OnCodes, duhErr.Code())
+			return slices.Contains(policy.OnCodes, duhErr.HTTPCode())
 		}
 	} else {
 		return true

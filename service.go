@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
 	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	json "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"net/http"
-	"strings"
 )
 
 const (
@@ -52,7 +54,7 @@ func ReadRequest(r *http.Request, m proto.Message, limit int64) error {
 	if err != nil {
 		var e Error
 		if errors.As(err, &e) {
-			return NewServiceError(e.Code(), fmt.Sprintf("request body %s", e.Message()), nil, nil)
+			return NewServiceError(e.HTTPCode(), fmt.Sprintf("request body %s", e.Message()), nil, nil)
 		}
 		return NewServiceError(CodeInternalError, "", err, nil)
 	}
@@ -80,10 +82,9 @@ func ReadRequest(r *http.Request, m proto.Message, limit int64) error {
 // ReplyWithCode replies to the request with the specified message and status code
 func ReplyWithCode(w http.ResponseWriter, r *http.Request, code int, details map[string]string, msg string) {
 	Reply(w, r, code, &v1.Reply{
-		CodeText: CodeText(code),
-		Code:     int32(code),
-		Details:  details,
-		Message:  msg,
+		Code:    strconv.Itoa(code),
+		Details: details,
+		Message: msg,
 	})
 }
 
@@ -93,7 +94,7 @@ func ReplyWithCode(w http.ResponseWriter, r *http.Request, code int, details map
 func ReplyError(w http.ResponseWriter, r *http.Request, err error) {
 	var re Error
 	if errors.As(err, &re) {
-		Reply(w, r, re.Code(), re.ProtoMessage())
+		Reply(w, r, re.HTTPCode(), re.ProtoMessage())
 		return
 	}
 	// If err has no Error in the error chain, then reply with CodeInternalError and the message
