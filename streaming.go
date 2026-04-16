@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -174,4 +175,95 @@ func buildErrorReply(err error) *v1.Reply {
 		Code:    strconv.Itoa(CodeInternalError),
 		Message: err.Error(),
 	}
+}
+
+// StreamReader is the client-side interface for reading structured stream frames.
+// It is NOT safe for concurrent use.
+type StreamReader interface {
+	// Recv reads the next frame from the stream and unmarshals the payload into
+	// the provided message. Returns io.EOF when the stream is complete.
+	Recv(proto.Message) error
+	// Close aborts the in-flight HTTP response and releases resources.
+	// Safe to call multiple times.
+	Close() error
+}
+
+var _ StreamReader = (*streamReader)(nil)
+
+type streamReader struct {
+	r          *stream.Reader
+	resp       *http.Response
+	unmarshal  func([]byte, proto.Message) error
+	cancel     context.CancelFunc
+	done       bool
+	hasPending bool
+}
+
+func (sr *streamReader) Recv(msg proto.Message) error {
+	// If the stream is already done and there is no pending final payload, return EOF.
+	if sr.done && !sr.hasPending {
+		return io.EOF
+	}
+
+	// If a previous call read a final frame with payload, the payload was already
+	// unmarshalled. This call returns EOF to signal stream completion.
+	if sr.hasPending {
+		sr.hasPending = false
+		sr.done = true
+		return io.EOF
+	}
+
+	flag, payload, err := sr.r.ReadFrame()
+	if err != nil {
+		if err == io.EOF {
+			// Stream ended without a final or error frame -- infrastructure error per spec.
+			sr.done = true
+			return io.ErrUnexpectedEOF
+		}
+		sr.done = true
+		return err
+	}
+
+	switch flag {
+	case stream.FlagData:
+		return sr.unmarshal(payload, msg)
+
+	case stream.FlagFinal:
+		if len(payload) > 0 {
+			if err := sr.unmarshal(payload, msg); err != nil {
+				sr.done = true
+				return err
+			}
+			sr.hasPending = true
+			return nil
+		}
+		sr.done = true
+		return io.EOF
+
+	case stream.FlagError:
+		sr.done = true
+		var reply v1.Reply
+		if err := sr.unmarshal(payload, &reply); err != nil {
+			return fmt.Errorf("while unmarshalling error frame: %w", err)
+		}
+		return &ClientError{
+			code:     reply.Code,
+			httpCode: sr.resp.StatusCode,
+			msg:      reply.Message,
+			details:  reply.Details,
+		}
+
+	default:
+		sr.done = true
+		return fmt.Errorf("unknown frame flag: 0x%x", flag)
+	}
+}
+
+func (sr *streamReader) Close() error {
+	if sr.done {
+		return nil
+	}
+	sr.done = true
+	sr.cancel()
+	return sr.resp.Body.Close()
 }
