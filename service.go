@@ -29,9 +29,11 @@ import (
 )
 
 const (
-	ContentTypeProtoBuf = "application/protobuf"
-	ContentTypeJSON     = "application/json"
-	ContentOctetStream  = "application/octet-stream"
+	ContentTypeProtoBuf   = "application/protobuf"
+	ContentTypeJSON       = "application/json"
+	ContentOctetStream    = "application/octet-stream"
+	ContentStreamJSON     = "application/duh-stream+json"
+	ContentStreamProtoBuf = "application/duh-stream+protobuf"
 )
 
 var (
@@ -59,10 +61,7 @@ func ReadRequest(r *http.Request, m proto.Message, limit int64) error {
 		return NewServiceError(CodeInternalError, "", err, nil)
 	}
 
-	// Ignore multiple mime types separated by comma ',' or mime type parameters separated by semicolon ';'
-	mimeType := TrimSuffix(r.Header.Get("Content-Type"), ";,")
-
-	switch strings.TrimSpace(strings.ToLower(mimeType)) {
+	switch normalizeMediaType(r.Header.Get("Content-Type")) {
 	case "", "*/*", "application/*", ContentTypeJSON:
 		if err := json.Unmarshal(b.Bytes(), m); err != nil {
 			return NewServiceError(CodeClientContentError, "", err, nil)
@@ -106,10 +105,9 @@ func ReplyError(w http.ResponseWriter, r *http.Request, err error) {
 // Reply() provides content negotiation for protobuf if the request has the 'Accept' header set.
 // If no 'Accept' header was provided, Reply() will marshall the proto.Message into JSON.
 func Reply(w http.ResponseWriter, r *http.Request, code int, resp proto.Message) {
-	// Ignore multiple mime types separated by comma ',' or mime type parameters separated by semicolon ';'
-	mimeType := TrimSuffix(r.Header.Get("Accept"), ";,")
+	mimeType := normalizeMediaType(r.Header.Get("Accept"))
 
-	switch strings.TrimSpace(strings.ToLower(mimeType)) {
+	switch mimeType {
 	case "", "*/*", "application/*", ContentTypeJSON:
 		b, err := json.Marshal(resp)
 		if err != nil {
@@ -146,4 +144,10 @@ func TrimSuffix(s, sep string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// normalizeMediaType strips MIME parameters (after ';' or ','), trims whitespace,
+// and lowercases the result, producing a canonical media type for comparison.
+func normalizeMediaType(value string) string {
+	return strings.TrimSpace(strings.ToLower(TrimSuffix(value, ";,")))
 }

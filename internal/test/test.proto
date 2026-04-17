@@ -21,3 +21,14 @@ option go_package = "github.com/duh-rpc/duh.go/v2/internal/test";
 message ErrorsRequest {
   string case = 1;
 }
+
+message StreamRequest {
+  int32 count = 1;              // Number of data frames to send
+  string error_at = 2;          // If set, return this error after sending 'count' frames
+  bool close_with_payload = 3;  // If true, close with a payload in the final frame
+}
+
+message StreamItem {
+  int64 sequence = 1;
+  string data = 2;
+}

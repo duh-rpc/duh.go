@@ -15,13 +15,23 @@ limitations under the License.
 package duh_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/duh-rpc/duh.go/v2"
 	"github.com/duh-rpc/duh.go/v2/demo"
+	"github.com/duh-rpc/duh.go/v2/internal/test"
+	"github.com/duh-rpc/duh.go/v2/stream"
 	"github.com/stretchr/testify/assert"
-	"net/http/httptest"
+	"github.com/stretchr/testify/require"
+	json "google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestDemoHappyPath(t *testing.T) {
@@ -64,7 +74,346 @@ func TestDemoHappyPath(t *testing.T) {
 	}
 }
 
-// TODO: Client example of passing `application/octet-stream` with `duh.DoBytes()`
+func TestStreamingHappyPath(t *testing.T) {
+	service := test.NewService()
+	server := httptest.NewServer(&test.Handler{Service: service})
+	defer server.Close()
+
+	c := test.NewClient(test.ClientConfig{Endpoint: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	sr, err := c.TestStream(ctx, &test.StreamRequest{Count: 5})
+	require.NoError(t, err)
+
+	// Collect all items
+	var items []*test.StreamItem
+	for {
+		var item test.StreamItem
+		err := sr.Recv(&item)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		items = append(items, &item)
+	}
+
+	require.Len(t, items, 5)
+	for i, item := range items {
+		assert.Equal(t, int64(i), item.Sequence)
+		assert.Equal(t, fmt.Sprintf("item-%d", i), item.Data)
+	}
+
+	// Verify subsequent Recv returns EOF
+	var extra test.StreamItem
+	assert.Equal(t, io.EOF, sr.Recv(&extra))
+
+	// Close is safe to call after EOF
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamingErrorFrame(t *testing.T) {
+	service := test.NewService()
+	server := httptest.NewServer(&test.Handler{Service: service})
+	defer server.Close()
+
+	c := test.NewClient(test.ClientConfig{Endpoint: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	sr, err := c.TestStream(ctx, &test.StreamRequest{
+		Count:   3,
+		ErrorAt: "database connection lost",
+	})
+	require.NoError(t, err)
+
+	// Receive 3 data frames successfully
+	for i := 0; i < 3; i++ {
+		var item test.StreamItem
+		require.NoError(t, sr.Recv(&item))
+		assert.Equal(t, int64(i), item.Sequence)
+	}
+
+	// Next Recv returns the error frame
+	var item test.StreamItem
+	err = sr.Recv(&item)
+	require.Error(t, err)
+
+	var duhErr duh.Error
+	require.True(t, errors.As(err, &duhErr))
+	assert.Equal(t, "500", duhErr.Code())
+	assert.Contains(t, duhErr.Message(), "database connection lost")
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamingCloseWithPayload(t *testing.T) {
+	service := test.NewService()
+	server := httptest.NewServer(&test.Handler{Service: service})
+	defer server.Close()
+
+	c := test.NewClient(test.ClientConfig{Endpoint: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	sr, err := c.TestStream(ctx, &test.StreamRequest{
+		Count:            2,
+		CloseWithPayload: true,
+	})
+	require.NoError(t, err)
+
+	// Receive 2 data frames
+	for i := 0; i < 2; i++ {
+		var item test.StreamItem
+		require.NoError(t, sr.Recv(&item))
+		assert.Equal(t, int64(i), item.Sequence)
+	}
+
+	// Receive the final frame payload (3rd Recv returns nil error with the payload)
+	var finalItem test.StreamItem
+	require.NoError(t, sr.Recv(&finalItem))
+	assert.Equal(t, int64(2), finalItem.Sequence)
+
+	// Next Recv returns EOF
+	var extra test.StreamItem
+	assert.Equal(t, io.EOF, sr.Recv(&extra))
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamingBadAcceptHeader(t *testing.T) {
+	service := test.NewService()
+	server := httptest.NewServer(&test.Handler{Service: service})
+	defer server.Close()
+
+	c := test.NewClient(test.ClientConfig{Endpoint: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	// Manually construct a request with a non-stream Accept header
+	payload, err := json.Marshal(&test.StreamRequest{Count: 1})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", duh.ContentTypeJSON)
+	req.Header.Set("Accept", duh.ContentTypeJSON)
+
+	// DoStream should return an error because the server returns a 400 Reply
+	sr, err := c.DoStream(ctx, req)
+	require.Error(t, err)
+	require.Nil(t, sr)
+
+	var duhErr *duh.ClientError
+	require.True(t, errors.As(err, &duhErr))
+	assert.Equal(t, http.StatusBadRequest, duhErr.HTTPCode())
+	assert.Contains(t, duhErr.Message(), "Accept header")
+}
+
+func TestStreamingSendAfterClose(t *testing.T) {
+	// Channel to capture the Send-after-Close error from the handler
+	sendErr := make(chan error, 1)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			// Close the stream immediately
+			if err := sw.Close(nil); err != nil {
+				sendErr <- fmt.Errorf("close failed: %w", err)
+				return err
+			}
+
+			// Attempt to Send after Close -- should fail
+			sendErr <- sw.Send(&test.StreamItem{Sequence: 1, Data: "after-close"})
+			return nil
+		})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	// Client receives EOF because the stream was closed with nil payload
+	var item test.StreamItem
+	assert.Equal(t, io.EOF, sr.Recv(&item))
+	require.NoError(t, sr.Close())
+
+	// Verify the server-side Send after Close returned an error
+	serverErr := <-sendErr
+	require.Error(t, serverErr)
+	assert.ErrorIs(t, serverErr, duh.ErrStreamClosed)
+}
+
+func TestStreamingServerDisconnect(t *testing.T) {
+	// Raw handler that writes one data frame but doesn't write a final frame
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", duh.ContentStreamJSON)
+
+		sw := stream.NewWriter(w)
+		payload, _ := json.Marshal(&test.StreamItem{Sequence: 0, Data: "only-item"})
+		_ = sw.WriteFrame(stream.FlagData, payload)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Return without writing a final frame -- connection closes
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	// First Recv succeeds
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+	assert.Equal(t, "only-item", item.Data)
+
+	// Second Recv returns io.ErrUnexpectedEOF because no final frame was sent
+	err = sr.Recv(&item)
+	assert.Equal(t, io.ErrUnexpectedEOF, err)
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamingContextCancel(t *testing.T) {
+	// Handler that sends frames with a delay between each
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			for i := 0; i < 100; i++ {
+				if err := sw.Send(&test.StreamItem{
+					Sequence: int64(i),
+					Data:     fmt.Sprintf("item-%d", i),
+				}); err != nil {
+					return err
+				}
+				select {
+				case <-sw.Context().Done():
+					return sw.Context().Err()
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+			return sw.Close(nil)
+		})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	// Read 2 frames
+	for i := 0; i < 2; i++ {
+		var item test.StreamItem
+		require.NoError(t, sr.Recv(&item))
+		assert.Equal(t, int64(i), item.Sequence)
+	}
+
+	// Cancel the context by closing the stream reader (which cancels the child context)
+	require.NoError(t, sr.Close())
+
+	// Subsequent Recv should return EOF (since we closed)
+	var item test.StreamItem
+	assert.Equal(t, io.EOF, sr.Recv(&item))
+}
+
+func TestStreamingCorruptDataFrame(t *testing.T) {
+	// Server writes one valid data frame, then a data frame with invalid JSON payload
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", duh.ContentStreamJSON)
+
+		sw := stream.NewWriter(w)
+		valid, _ := json.Marshal(&test.StreamItem{Sequence: 0, Data: "good"})
+		_ = sw.WriteFrame(stream.FlagData, valid)
+		_ = sw.WriteFrame(stream.FlagData, []byte("not valid json{{{"))
+		_ = sw.WriteFrame(stream.FlagFinal, nil)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	// First Recv succeeds
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+
+	// Second Recv fails due to corrupt payload
+	err = sr.Recv(&item)
+	require.Error(t, err)
+
+	// Subsequent Recv returns EOF (stream is done, not retried)
+	assert.Equal(t, io.EOF, sr.Recv(&item))
+
+	require.NoError(t, sr.Close())
+}
+
+func TestDoBytesHappyPath(t *testing.T) {
+	service := demo.NewService()
+	server := httptest.NewServer(&demo.Handler{Service: service})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	rc, err := c.DownloadBytes(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, rc)
+
+	data, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, "hello, bytes", string(data))
+	require.NoError(t, rc.Close())
+}
+
 // TODO: Update the benchmark tests
 
 // TODO: DUH-RPC Validation Test for any endpoint

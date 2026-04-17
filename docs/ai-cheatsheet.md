@@ -198,7 +198,7 @@ An endpoint is paginated if its response has `items` + `pagination`. Actions lik
 ## Schema Rules
 
 - Every operation MUST have a dedicated request schema and a dedicated response schema. No sharing across operations.
-- Name schemas after their operation: `CreateUserRequest`, `CreateUserResponse`.
+- Name schemas after their operation: `UserCreateRequest`, `UserCreateResponse`.
 - No `readOnly` or `writeOnly` field annotations. Put fields in the correct schema instead.
 
 ### Protobuf Compatibility Constraints

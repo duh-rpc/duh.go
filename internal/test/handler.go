@@ -33,8 +33,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/test.errors":
 		h.handleTestErrors(w, r)
 		return
+	case "/v1/test.stream":
+		duh.HandleStream(w, r, h.handleTestStream)
+		return
 	}
 	duh.ReplyWithCode(w, r, duh.CodeNotImplemented, nil, "no such method; "+r.URL.Path)
+}
+
+func (h *Handler) handleTestStream(r *http.Request, stream duh.StreamWriter) error {
+	var req StreamRequest
+	if err := duh.ReadRequest(r, &req, 5*duh.MegaByte); err != nil {
+		return err
+	}
+
+	items, err := h.Service.TestStream(r.Context(), &req)
+
+	// Send all data frames before handling error or close
+	for _, item := range items {
+		if sendErr := stream.Send(item); sendErr != nil {
+			return sendErr
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if req.CloseWithPayload {
+		return stream.Close(&StreamItem{Sequence: int64(req.Count)})
+	}
+	return stream.Close(nil)
 }
 
 func (h *Handler) handleTestErrors(w http.ResponseWriter, r *http.Request) {

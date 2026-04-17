@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,8 +12,10 @@ import (
 
 	"github.com/duh-rpc/duh.go/v2"
 	"github.com/duh-rpc/duh.go/v2/internal/test"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	json "google.golang.org/protobuf/encoding/protojson"
 )
 
 type badTransport struct {
@@ -205,4 +208,193 @@ func TestErrorInterface(t *testing.T) {
 	assert.Equal(t, "CARD_DECLINED", e.Code())
 	assert.Equal(t, duh.CodeRequestFailed, e.HTTPCode())
 	assert.Equal(t, "Request Failed:card was declined", e.Error())
+}
+
+func TestDoStreamErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		isInfra  bool
+		checkMsg string
+	}{
+		{
+			name: "ServerReturns400WithReplyBody",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{
+					Code:    "400",
+					Message: "bad request: missing field",
+				}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode: http.StatusBadRequest,
+			checkMsg: "bad request: missing field",
+		},
+		{
+			name: "ServerReturns502WithNonReplyBody",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte("upstream timeout"))
+			},
+			wantCode: http.StatusBadGateway,
+			isInfra:  true,
+			checkMsg: "upstream timeout",
+		},
+		{
+			name: "ServerReturns200WithWrongContentType",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("<html>oops</html>"))
+			},
+			wantCode: http.StatusOK,
+			isInfra:  true,
+			checkMsg: "<html>oops</html>",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			c := &duh.Client{Client: &http.Client{}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+			require.NoError(t, err)
+			req.Header.Set("Accept", duh.ContentStreamJSON)
+
+			sr, err := c.DoStream(ctx, req)
+			require.Error(t, err)
+			require.Nil(t, sr)
+
+			var ce *duh.ClientError
+			require.True(t, errors.As(err, &ce))
+			assert.Equal(t, tt.wantCode, ce.HTTPCode())
+			assert.Contains(t, ce.Message(), tt.checkMsg)
+			if tt.isInfra {
+				assert.True(t, ce.IsInfraError())
+			}
+		})
+	}
+
+	// Transport failure (bad URL)
+	t.Run("TransportFailure", func(t *testing.T) {
+		c := &duh.Client{Client: &http.Client{}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:1/v1/test.stream", nil)
+		require.NoError(t, err)
+		req.Header.Set("Accept", duh.ContentStreamJSON)
+
+		sr, err := c.DoStream(ctx, req)
+		require.Error(t, err)
+		require.Nil(t, sr)
+
+		var ce *duh.ClientError
+		require.True(t, errors.As(err, &ce))
+		assert.Equal(t, duh.CodeClientError, ce.HTTPCode())
+	})
+}
+
+func TestDoBytesErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		isInfra  bool
+		checkMsg string
+	}{
+		{
+			name: "ServerReturns400WithReplyBody",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{
+					Code:    "400",
+					Message: "bad request: invalid params",
+				}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode: http.StatusBadRequest,
+			checkMsg: "bad request: invalid params",
+		},
+		{
+			name: "ServerReturns200WithWrongContentType",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("not binary data"))
+			},
+			wantCode: http.StatusOK,
+			isInfra:  true,
+			checkMsg: "not binary data",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			c := &duh.Client{Client: &http.Client{}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/bytes.download", nil)
+			require.NoError(t, err)
+			req.Header.Set("Accept", duh.ContentOctetStream)
+
+			rc, err := c.DoBytes(ctx, req)
+			require.Error(t, err)
+			require.Nil(t, rc)
+
+			var ce *duh.ClientError
+			require.True(t, errors.As(err, &ce))
+			assert.Equal(t, tt.wantCode, ce.HTTPCode())
+			assert.Contains(t, ce.Message(), tt.checkMsg)
+			if tt.isInfra {
+				assert.True(t, ce.IsInfraError())
+			}
+		})
+	}
+
+	// Success case: returns body as io.ReadCloser
+	t.Run("SuccessReturnsBody", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", duh.ContentOctetStream)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("hello, bytes"))
+		}))
+		defer server.Close()
+
+		c := &duh.Client{Client: &http.Client{}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/bytes.download", nil)
+		require.NoError(t, err)
+		req.Header.Set("Accept", duh.ContentOctetStream)
+
+		rc, err := c.DoBytes(ctx, req)
+		require.NoError(t, err)
+		require.NotNil(t, rc)
+
+		data, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		assert.Equal(t, "hello, bytes", string(data))
+		require.NoError(t, rc.Close())
+	})
+
+	// Transport failure
+	t.Run("TransportFailure", func(t *testing.T) {
+		c := &duh.Client{Client: &http.Client{}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:1/v1/bytes.download", nil)
+		require.NoError(t, err)
+
+		rc, err := c.DoBytes(ctx, req)
+		require.Error(t, err)
+		require.Nil(t, rc)
+
+		var ce *duh.ClientError
+		require.True(t, errors.As(err, &ce))
+		assert.Equal(t, duh.CodeClientError, ce.HTTPCode())
+	})
 }

@@ -38,3 +38,12 @@ message RenderPixelResponse {
   // Gray represents an 8-bit grayscale color.
   int64 gray = 1;
 }
+
+message ListEventsRequest {
+  int32 count = 1;  // Number of events to stream
+}
+
+message Event {
+  int64 sequence = 1;
+  string message = 2;
+}

@@ -65,6 +65,18 @@ func (h *Service) RenderPixel(ctx context.Context, req *RenderPixelRequest, resp
 	return nil
 }
 
+// ListEvents generates a list of events to be streamed to the client.
+func (h *Service) ListEvents(ctx context.Context, req *ListEventsRequest) ([]*Event, error) {
+	events := make([]*Event, 0, req.Count)
+	for i := int32(0); i < req.Count; i++ {
+		events = append(events, &Event{
+			Sequence: int64(i),
+			Message:  fmt.Sprintf("event-%d", i),
+		})
+	}
+	return events, nil
+}
+
 func norm(x, total int64, min, max float64) float64 {
 	return (max-min)*float64(x)/float64(total) - max
 }
