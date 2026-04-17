@@ -145,11 +145,17 @@ func (e *serviceError) HTTPCode() int {
 }
 
 func (e *serviceError) Message() string {
-	return e.err.Error()
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return ""
 }
 
 func (e *serviceError) Error() string {
-	return CodeText(e.httpCode) + ":" + e.err.Error()
+	if e.err != nil {
+		return CodeText(e.httpCode) + ": " + e.err.Error()
+	}
+	return CodeText(e.httpCode)
 }
 
 func (e *serviceError) Details() map[string]string {
@@ -166,13 +172,14 @@ type ClientError struct {
 }
 
 func (e *ClientError) ProtoMessage() proto.Message {
-	if e.err != nil && e.msg == "" {
-		e.msg = e.err.Error()
+	msg := e.msg
+	if e.err != nil && msg == "" {
+		msg = e.err.Error()
 	}
 	return &v1.Reply{
 		Code:    e.code,
 		Details: e.details,
-		Message: e.msg,
+		Message: msg,
 	}
 }
 
@@ -193,12 +200,10 @@ func (e *ClientError) Message() string {
 }
 
 func (e *ClientError) Error() string {
-	// If e.err is set, it means this error is from the client
 	if e.err != nil {
 		return CodeText(e.httpCode) + ": " + e.err.Error()
 	}
 
-	// This means the reply is not from the service, but from the infrastructure.
 	if e.isInfraError {
 		return fmt.Sprintf("%s %s returned infrastructure error %d with body: %s",
 			e.details[DetailsHttpMethod],
@@ -207,7 +212,7 @@ func (e *ClientError) Error() string {
 			e.msg,
 		)
 	}
-	// Error is from the service
+
 	return fmt.Sprintf("%s %s returned '%s' with message: %s",
 		e.details[DetailsHttpMethod],
 		e.details[DetailsHttpUrl],

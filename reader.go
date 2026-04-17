@@ -18,7 +18,7 @@ const (
 	MegaByte = Kilobyte * 1000
 	Mebibyte = Kibibyte * 1024
 	Gibibyte = Mebibyte * 1024
-	Gigabyte = MegaByte * 1024
+	Gigabyte = MegaByte * 1000
 )
 
 // NewLimitReader returns a ReaderCloser that returns ErrDataLimitExceeded after n bytes have been read.

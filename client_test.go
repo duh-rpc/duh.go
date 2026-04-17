@@ -207,7 +207,36 @@ func TestErrorInterface(t *testing.T) {
 	require.True(t, errors.As(err, &e))
 	assert.Equal(t, "CARD_DECLINED", e.Code())
 	assert.Equal(t, duh.CodeRequestFailed, e.HTTPCode())
-	assert.Equal(t, "Request Failed:card was declined", e.Error())
+	assert.Equal(t, "Request Failed: card was declined", e.Error())
+}
+
+func TestServiceErrorNilErr(t *testing.T) {
+	// NewServiceErrorWithCode with both msg="" and err=nil must not panic
+	err := duh.NewServiceErrorWithCode(duh.CodeBadRequest, "400", "", nil, nil)
+	var e duh.Error
+	require.True(t, errors.As(err, &e))
+
+	assert.Equal(t, "", e.Message())
+	assert.Equal(t, "Bad Request", e.Error())
+	assert.Equal(t, "400", e.Code())
+	assert.Equal(t, duh.CodeBadRequest, e.HTTPCode())
+}
+
+func TestClientErrorProtoMessageNoMutation(t *testing.T) {
+	// ProtoMessage() must not mutate the receiver's Message() return value
+	err := duh.NewClientError("some error: %w", fmt.Errorf("inner"), nil)
+
+	var ce *duh.ClientError
+	require.True(t, errors.As(err, &ce))
+
+	msgBefore := ce.Message()
+
+	// Call ProtoMessage -- this previously mutated ce.msg
+	reply := ce.ProtoMessage()
+	require.NotNil(t, reply)
+
+	msgAfter := ce.Message()
+	assert.Equal(t, msgBefore, msgAfter)
 }
 
 func TestDoStreamErrors(t *testing.T) {

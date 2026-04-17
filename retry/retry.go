@@ -61,8 +61,12 @@ type BackOff struct {
 
 func (b BackOff) Next(attempts int) time.Duration {
 	d := time.Duration(float64(b.Min) * math.Pow(b.Factor, float64(attempts)))
-	if b.Rand != nil {
-		d = time.Duration(b.Rand.Float64() * b.Jitter * float64(d))
+	if b.Jitter > 0 {
+		r := rand.Float64()
+		if b.Rand != nil {
+			r = b.Rand.Float64()
+		}
+		d = time.Duration(r * b.Jitter * float64(d))
 	}
 	if d > b.Max {
 		return b.Max
@@ -74,7 +78,6 @@ func (b BackOff) Next(attempts int) time.Duration {
 }
 
 var DefaultBackOff = BackOff{
-	Rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	Min:    500 * time.Millisecond,
 	Max:    5 * time.Second,
 	Jitter: 0.2,
@@ -136,18 +139,15 @@ func shouldRetry(err error, policy Policy) bool {
 		panic("err cannot be nil")
 	}
 
-	// If no codes are specified, retry any error
 	if policy.OnCodes == nil && policy.OnInfraCodes == nil {
 		return true
 	}
 
-	// Extract the HTTP status code from the error
 	var hc httpCoder
 	if !errors.As(err, &hc) {
 		return false
 	}
 
-	// Check if this is an infrastructure error
 	var ic infraChecker
 	if errors.As(err, &ic) && ic.IsInfraError() {
 		if policy.OnInfraCodes != nil {
@@ -156,7 +156,6 @@ func shouldRetry(err error, policy Policy) bool {
 		return false
 	}
 
-	// Service error (or non-ClientError with HTTPCode)
 	if policy.OnCodes != nil {
 		return slices.Contains(policy.OnCodes, hc.HTTPCode())
 	}
@@ -176,7 +175,6 @@ func rateLimitDuration(err error) time.Duration {
 		return 0
 	}
 
-	// Check for ratelimit-reset or http.retry-after
 	for _, key := range []string{detailRateLimitReset, detailRetryAfter} {
 		if v, ok := details[key]; ok {
 			seconds, parseErr := strconv.ParseFloat(v, 64)
@@ -205,12 +203,17 @@ func On(ctx context.Context, p Policy, operation func(context.Context, int) erro
 			}
 
 			if shouldRetry(err, p) {
-				// Use rate-limit duration if available, otherwise use backoff
 				sleepDur := rateLimitDuration(err)
 				if sleepDur == 0 {
 					sleepDur = p.Interval.Next(attempt)
 				}
-				time.Sleep(sleepDur)
+				timer := time.NewTimer(sleepDur)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
 				attempt++
 			} else {
 				return err

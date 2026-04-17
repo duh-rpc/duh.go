@@ -15,6 +15,8 @@ limitations under the License.
 package duh
 
 import (
+	"net/http"
+
 	"github.com/duh-rpc/duh.go/v2/retry"
 )
 
@@ -27,7 +29,7 @@ var RetryableCodes = []int{CodeTooManyRequests, CodeRetryRequest, CodeInternalEr
 // A service 404 (with Reply body) means "resource not found" and is NOT in
 // RetryableCodes, so it won't be retried. The OnCodes/OnInfraCodes split makes
 // this distinction safe.
-var RetryableInfraCodes = []int{CodeNotFound, 502, 503, 504}
+var RetryableInfraCodes = []int{CodeNotFound, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}
 
 // OnRetryable retries indefinitely on known retryable service codes and
 // infrastructure errors. Cancel via context.
