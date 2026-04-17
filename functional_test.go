@@ -15,6 +15,7 @@ limitations under the License.
 package duh_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -194,11 +195,7 @@ func TestStreamingBadAcceptHeader(t *testing.T) {
 	require.NoError(t, err)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		server.URL+"/v1/test.stream", io.NopCloser(
-			io.NewSectionReader(
-				readerAtFromBytes(payload), 0, int64(len(payload)),
-			),
-		))
+		server.URL+"/v1/test.stream", bytes.NewReader(payload))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", duh.ContentTypeJSON)
 	req.Header.Set("Accept", duh.ContentTypeJSON)
@@ -212,26 +209,6 @@ func TestStreamingBadAcceptHeader(t *testing.T) {
 	require.True(t, errors.As(err, &duhErr))
 	assert.Equal(t, http.StatusBadRequest, duhErr.HTTPCode())
 	assert.Contains(t, duhErr.Message(), "Accept header")
-}
-
-// readerAtFromBytes creates a bytes.Reader that implements io.ReaderAt.
-func readerAtFromBytes(b []byte) *bytesReaderAt {
-	return &bytesReaderAt{data: b}
-}
-
-type bytesReaderAt struct {
-	data []byte
-}
-
-func (r *bytesReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
-	if off >= int64(len(r.data)) {
-		return 0, io.EOF
-	}
-	n = copy(p, r.data[off:])
-	if n < len(p) {
-		err = io.EOF
-	}
-	return
 }
 
 func TestStreamingSendAfterClose(t *testing.T) {
@@ -275,7 +252,7 @@ func TestStreamingSendAfterClose(t *testing.T) {
 	// Verify the server-side Send after Close returned an error
 	serverErr := <-sendErr
 	require.Error(t, serverErr)
-	assert.Contains(t, serverErr.Error(), "stream is closed")
+	assert.ErrorIs(t, serverErr, duh.ErrStreamClosed)
 }
 
 func TestStreamingServerDisconnect(t *testing.T) {

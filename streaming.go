@@ -54,9 +54,12 @@ type streamWriter struct {
 	closed  bool
 }
 
+// ErrStreamClosed is returned when Send or Close is called on a closed StreamWriter.
+var ErrStreamClosed = errors.New("stream is closed")
+
 func (sw *streamWriter) Send(msg proto.Message) error {
 	if sw.closed {
-		return errors.New("stream is closed")
+		return ErrStreamClosed
 	}
 
 	payload, err := sw.marshal(msg)
@@ -73,7 +76,7 @@ func (sw *streamWriter) Send(msg proto.Message) error {
 
 func (sw *streamWriter) Close(msg proto.Message) error {
 	if sw.closed {
-		return errors.New("stream is closed")
+		return ErrStreamClosed
 	}
 	sw.closed = true
 
@@ -143,7 +146,6 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 		return
 	}
 
-	// Construct an error frame from the handler error.
 	reply := buildErrorReply(err)
 	payload, marshalErr := sw.marshal(reply)
 	if marshalErr != nil {
@@ -200,7 +202,6 @@ type streamReader struct {
 }
 
 func (sr *streamReader) Recv(msg proto.Message) error {
-	// If the stream is already done and there is no pending final payload, return EOF.
 	if sr.done && !sr.hasPending {
 		return io.EOF
 	}
@@ -260,10 +261,11 @@ func (sr *streamReader) Recv(msg proto.Message) error {
 }
 
 func (sr *streamReader) Close() error {
+	sr.cancel()
 	if sr.done {
+		_ = sr.resp.Body.Close()
 		return nil
 	}
 	sr.done = true
-	sr.cancel()
 	return sr.resp.Body.Close()
 }
