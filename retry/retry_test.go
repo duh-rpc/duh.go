@@ -359,6 +359,52 @@ func TestRetry(t *testing.T) {
 	})
 }
 
+func TestBackOffConcurrentSafety(t *testing.T) {
+	// DefaultBackOff must be safe for concurrent use from multiple goroutines.
+	// Previously, DefaultBackOff contained a shared *rand.Rand which is not goroutine-safe.
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				d := retry.DefaultBackOff.Next(j % 5)
+				_ = d
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRetrySleepContextCancel(t *testing.T) {
+	// Cancelling the context during a retry sleep must return promptly,
+	// not after the full sleep duration elapses.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	policy := retry.Policy{
+		Interval: retry.Sleep(10 * time.Second),
+		Attempts: 0,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- retry.On(ctx, policy, func(ctx context.Context, attempt int) error {
+			return errors.New("always fail")
+		})
+	}()
+
+	// Give the retry loop time to enter its sleep
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	start := time.Now()
+	err := <-done
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, time.Second)
+}
+
 // makeInfraError creates a *duh.ClientError with IsInfraError() == true by using duh.NewInfraError
 // with a test HTTP response.
 func makeInfraError(t *testing.T, statusCode int) error {

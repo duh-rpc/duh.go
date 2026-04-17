@@ -133,43 +133,27 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 	}
 
 	err := handler(r, sw)
-	if err == nil {
-		return
-	}
-
-	// Handler returned an error. If the stream is already closed (final frame
-	// was sent), silently give up -- the handler had the Send error and already
-	// returned.
-	if sw.closed {
+	if err == nil || sw.closed {
 		return
 	}
 
 	reply := buildErrorReply(err)
 	payload, marshalErr := sw.marshal(reply)
 	if marshalErr != nil {
-		// Cannot marshal the error reply; nothing more we can do.
 		return
 	}
 
-	// Write the error frame. If the write fails (client disconnected),
-	// silently give up.
 	if writeErr := sw.w.WriteFrame(stream.FlagError, payload); writeErr != nil {
 		return
 	}
 	sw.flusher.Flush()
 }
 
-// buildErrorReply constructs a v1.Reply from an error. If the error satisfies
-// duh.Error, its Code(), Message(), and Details() are used. Otherwise, the
-// error is wrapped as a CodeInternalError.
+// buildErrorReply constructs a v1.Reply from an error.
 func buildErrorReply(err error) *v1.Reply {
 	var e Error
 	if errors.As(err, &e) {
-		return &v1.Reply{
-			Code:    e.Code(),
-			Message: e.Message(),
-			Details: e.Details(),
-		}
+		return e.ProtoMessage().(*v1.Reply)
 	}
 	return &v1.Reply{
 		Code:    strconv.Itoa(CodeInternalError),

@@ -107,35 +107,32 @@ func ReplyError(w http.ResponseWriter, r *http.Request, err error) {
 func Reply(w http.ResponseWriter, r *http.Request, code int, resp proto.Message) {
 	mimeType := normalizeMediaType(r.Header.Get("Accept"))
 
+	var marshalFn func(proto.Message) ([]byte, error)
+	var contentType string
 	switch mimeType {
 	case "", "*/*", "application/*", ContentTypeJSON:
-		b, err := json.Marshal(resp)
-		if err != nil {
-			// TODO: This should be logged and not returned to the client, we need to define a logger
-			ReplyWithCode(w, r, CodeInternalError, nil, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", ContentTypeJSON)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(code)
-		_, _ = w.Write(b)
+		marshalFn = json.Marshal
+		contentType = ContentTypeJSON
 	case ContentTypeProtoBuf:
-		b, err := proto.Marshal(resp)
-		if err != nil {
-			// TODO: This should be logged and not returned to the client, we need to define a logger
-			ReplyWithCode(w, r, CodeInternalError, nil, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", ContentTypeProtoBuf)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(code)
-		_, _ = w.Write(b)
+		marshalFn = proto.Marshal
+		contentType = ContentTypeProtoBuf
 	default:
 		r.Header.Set("Accept", ContentTypeJSON)
 		ReplyWithCode(w, r, CodeClientContentError, nil, fmt.Sprintf("Accept header '%s' is invalid format "+
 			"or unrecognized content type, only [%s] are supported by this method",
 			mimeType, strings.Join(SupportedMimeTypes, ",")))
+		return
 	}
+
+	b, err := marshalFn(resp)
+	if err != nil {
+		ReplyWithCode(w, r, CodeInternalError, nil, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	_, _ = w.Write(b)
 }
 
 // TrimSuffix trims everything after the first separator is found

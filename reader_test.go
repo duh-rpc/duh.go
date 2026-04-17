@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+func TestSIConstants(t *testing.T) {
+	assert.Equal(t, int64(1000), int64(duh.Kilobyte))
+	assert.Equal(t, int64(1024), int64(duh.Kibibyte))
+	assert.Equal(t, int64(1_000_000), int64(duh.MegaByte))
+	assert.Equal(t, int64(1_048_576), int64(duh.Mebibyte))
+	assert.Equal(t, int64(1_000_000_000), int64(duh.Gigabyte))
+	assert.Equal(t, int64(1_073_741_824), int64(duh.Gibibyte))
+}
+
 func TestNewReader(t *testing.T) {
 	// Can read up to the requested limit
 	r := duh.NewLimitReader(io.NopCloser(strings.NewReader("twenty regular bytes")), 20)

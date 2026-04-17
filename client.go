@@ -122,22 +122,15 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 		}
 	}
 
-	switch normalizeMediaType(resp.Header.Get("Content-Type")) {
-	case ContentTypeJSON:
-		if err := json.Unmarshal(body.Bytes(), out); err != nil {
-			return NewClientError(
-				"", fmt.Errorf("while parsing response body '%s': %w", body.Bytes(), err), nil)
-		}
-		return nil
-	case ContentTypeProtoBuf:
-		if err := proto.Unmarshal(body.Bytes(), out); err != nil {
-			return NewClientError(
-				"", fmt.Errorf("while parsing response body '%s': %w", body.Bytes(), err), nil)
-		}
-		return nil
-	default:
+	unmarshalFn, ok := unmarshalForMediaType(resp.Header.Get("Content-Type"))
+	if !ok {
 		return NewInfraError(req, resp, body.Bytes())
 	}
+	if err := unmarshalFn(body.Bytes(), out); err != nil {
+		return NewClientError(
+			"", fmt.Errorf("while parsing response body '%s': %w", body.Bytes(), err), nil)
+	}
+	return nil
 }
 
 // NewReplyError returns an error that originates from the service implementation, and does not originate from
@@ -147,7 +140,7 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 // back to the caller as an error.
 func NewReplyError(req *http.Request, resp *http.Response, reply *v1.Reply) error {
 	details := map[string]string{
-		DetailsHttpCode:   fmt.Sprintf("%d", resp.StatusCode),
+		DetailsHttpCode:   strconv.Itoa(resp.StatusCode),
 		DetailsCodeText:   CodeText(resp.StatusCode),
 		DetailsHttpUrl:    req.URL.String(),
 		DetailsHttpMethod: req.Method,
@@ -177,7 +170,7 @@ func NewReplyError(req *http.Request, resp *http.Response, reply *v1.Reply) erro
 func NewInfraError(req *http.Request, resp *http.Response, body []byte) error {
 	return &ClientError{
 		details: map[string]string{
-			DetailsHttpCode:   fmt.Sprintf("%d", resp.StatusCode),
+			DetailsHttpCode:   strconv.Itoa(resp.StatusCode),
 			DetailsHttpBody:   string(body),
 			DetailsHttpUrl:    req.URL.String(),
 			DetailsHttpStatus: resp.Status,
@@ -282,6 +275,19 @@ func (c *Client) DoBytes(ctx context.Context, req *http.Request) (io.ReadCloser,
 	return resp.Body, nil
 }
 
+// unmarshalForMediaType returns the appropriate unmarshal function for the given
+// Content-Type header value. Returns false if the media type is not recognized.
+func unmarshalForMediaType(contentType string) (func([]byte, proto.Message) error, bool) {
+	switch normalizeMediaType(contentType) {
+	case ContentTypeJSON:
+		return json.Unmarshal, true
+	case ContentTypeProtoBuf:
+		return proto.Unmarshal, true
+	default:
+		return nil, false
+	}
+}
+
 // handleErrorResponse reads the response body and classifies the error based
 // on the content type and body contents. It closes the response body.
 func handleErrorResponse(req *http.Request, resp *http.Response) error {
@@ -301,20 +307,13 @@ func handleErrorResponse(req *http.Request, resp *http.Response) error {
 		}
 	}
 
-	switch normalizeMediaType(resp.Header.Get("Content-Type")) {
-	case ContentTypeJSON:
-		var reply v1.Reply
-		if err := json.Unmarshal(body.Bytes(), &reply); err != nil {
-			return NewInfraError(req, resp, body.Bytes())
-		}
-		return NewReplyError(req, resp, &reply)
-	case ContentTypeProtoBuf:
-		var reply v1.Reply
-		if err := proto.Unmarshal(body.Bytes(), &reply); err != nil {
-			return NewInfraError(req, resp, body.Bytes())
-		}
-		return NewReplyError(req, resp, &reply)
-	default:
+	unmarshalFn, ok := unmarshalForMediaType(resp.Header.Get("Content-Type"))
+	if !ok {
 		return NewInfraError(req, resp, body.Bytes())
 	}
+	var reply v1.Reply
+	if err := unmarshalFn(body.Bytes(), &reply); err != nil {
+		return NewInfraError(req, resp, body.Bytes())
+	}
+	return NewReplyError(req, resp, &reply)
 }
