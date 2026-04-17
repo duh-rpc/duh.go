@@ -349,6 +349,52 @@ func TestStreamingContextCancel(t *testing.T) {
 	assert.Equal(t, io.EOF, sr.Recv(&item))
 }
 
+func TestStreamingCorruptDataFrame(t *testing.T) {
+	// Server writes one valid data frame, then a data frame with invalid JSON payload
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", duh.ContentStreamJSON)
+
+		sw := stream.NewWriter(w)
+		valid, _ := json.Marshal(&test.StreamItem{Sequence: 0, Data: "good"})
+		_ = sw.WriteFrame(stream.FlagData, valid)
+		_ = sw.WriteFrame(stream.FlagData, []byte("not valid json{{{"))
+		_ = sw.WriteFrame(stream.FlagFinal, nil)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	// First Recv succeeds
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+
+	// Second Recv fails due to corrupt payload
+	err = sr.Recv(&item)
+	require.Error(t, err)
+
+	// Subsequent Recv returns EOF (stream is done, not retried)
+	assert.Equal(t, io.EOF, sr.Recv(&item))
+
+	require.NoError(t, sr.Close())
+}
+
 func TestDoBytesHappyPath(t *testing.T) {
 	service := demo.NewService()
 	server := httptest.NewServer(&demo.Handler{Service: service})

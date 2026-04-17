@@ -24,7 +24,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
@@ -96,7 +95,6 @@ var (
 // In the case of unexpected request or response errors, Do will return *duh.ClientError
 // with as much detail as possible.
 func (c *Client) Do(req *http.Request, out proto.Message) error {
-	// Preform the HTTP call
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return NewClientError("during client.Do(): %w", err, map[string]string{
@@ -104,10 +102,13 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 			DetailsHttpMethod: req.Method,
 		})
 	}
+
+	if resp.StatusCode != CodeOK {
+		return handleErrorResponse(req, resp)
+	}
 	defer func() { _ = resp.Body.Close() }()
 
 	var body bytes.Buffer
-	// Copy the response into a buffer
 	if _, err = io.Copy(&body, resp.Body); err != nil {
 		return &ClientError{
 			err: fmt.Errorf("while reading response body: %w", err),
@@ -121,50 +122,22 @@ func (c *Client) Do(req *http.Request, out proto.Message) error {
 		}
 	}
 
-	// Handle content negotiation and un-marshal the response
-	mt := TrimSuffix(resp.Header.Get("Content-Type"), ";,")
-	switch strings.TrimSpace(strings.ToLower(mt)) {
+	switch normalizeMediaType(resp.Header.Get("Content-Type")) {
 	case ContentTypeJSON:
-		return c.handleJSONResponse(req, resp, body.Bytes(), out)
+		if err := json.Unmarshal(body.Bytes(), out); err != nil {
+			return NewClientError(
+				"", fmt.Errorf("while parsing response body '%s': %w", body.Bytes(), err), nil)
+		}
+		return nil
 	case ContentTypeProtoBuf:
-		return c.handleProtobufResponse(req, resp, body.Bytes(), out)
+		if err := proto.Unmarshal(body.Bytes(), out); err != nil {
+			return NewClientError(
+				"", fmt.Errorf("while parsing response body '%s': %w", body.Bytes(), err), nil)
+		}
+		return nil
 	default:
 		return NewInfraError(req, resp, body.Bytes())
 	}
-}
-
-func (c *Client) handleJSONResponse(req *http.Request, resp *http.Response, body []byte, out proto.Message) error {
-	if resp.StatusCode != CodeOK {
-		var reply v1.Reply
-		if err := json.Unmarshal(body, &reply); err != nil {
-			// Assume the body is not a Reply structure because
-			// the server is not respecting the spec.
-			return NewInfraError(req, resp, body)
-		}
-		return NewReplyError(req, resp, &reply)
-	}
-
-	if err := json.Unmarshal(body, out); err != nil {
-		return NewClientError(
-			"", fmt.Errorf("while parsing response body '%s': %w", body, err), nil)
-	}
-	return nil
-}
-
-func (c *Client) handleProtobufResponse(req *http.Request, resp *http.Response, body []byte, out proto.Message) error {
-	if resp.StatusCode != CodeOK {
-		var reply v1.Reply
-		if err := proto.Unmarshal(body, &reply); err != nil {
-			return NewInfraError(req, resp, body)
-		}
-		return NewReplyError(req, resp, &reply)
-	}
-
-	if err := proto.Unmarshal(body, out); err != nil {
-		return NewClientError(
-			"", fmt.Errorf("while parsing response body '%s': %w", body, err), nil)
-	}
-	return nil
 }
 
 // NewReplyError returns an error that originates from the service implementation, and does not originate from
@@ -256,11 +229,8 @@ func (c *Client) DoStream(ctx context.Context, req *http.Request) (StreamReader,
 		return nil, handleErrorResponse(req, resp)
 	}
 
-	ct := TrimSuffix(resp.Header.Get("Content-Type"), ";,")
-	ct = strings.TrimSpace(strings.ToLower(ct))
-
 	var unmarshalFn func([]byte, proto.Message) error
-	switch ct {
+	switch normalizeMediaType(resp.Header.Get("Content-Type")) {
 	case ContentStreamJSON:
 		unmarshalFn = json.Unmarshal
 	case ContentStreamProtoBuf:
@@ -302,10 +272,7 @@ func (c *Client) DoBytes(ctx context.Context, req *http.Request) (io.ReadCloser,
 		return nil, handleErrorResponse(req, resp)
 	}
 
-	ct := TrimSuffix(resp.Header.Get("Content-Type"), ";,")
-	ct = strings.TrimSpace(strings.ToLower(ct))
-
-	if ct != ContentOctetStream {
+	if normalizeMediaType(resp.Header.Get("Content-Type")) != ContentOctetStream {
 		var body bytes.Buffer
 		_, _ = io.Copy(&body, resp.Body)
 		_ = resp.Body.Close()
@@ -334,8 +301,7 @@ func handleErrorResponse(req *http.Request, resp *http.Response) error {
 		}
 	}
 
-	ct := TrimSuffix(resp.Header.Get("Content-Type"), ";,")
-	switch strings.TrimSpace(strings.ToLower(ct)) {
+	switch normalizeMediaType(resp.Header.Get("Content-Type")) {
 	case ContentTypeJSON:
 		var reply v1.Reply
 		if err := json.Unmarshal(body.Bytes(), &reply); err != nil {

@@ -21,7 +21,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"github.com/duh-rpc/duh.go/v2/stream"
@@ -109,8 +108,7 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 		return
 	}
 
-	accept := TrimSuffix(r.Header.Get("Accept"), ";,")
-	accept = strings.TrimSpace(strings.ToLower(accept))
+	accept := normalizeMediaType(r.Header.Get("Accept"))
 
 	var marshalFn func(proto.Message) ([]byte, error)
 	switch accept {
@@ -227,7 +225,11 @@ func (sr *streamReader) Recv(msg proto.Message) error {
 
 	switch flag {
 	case stream.FlagData:
-		return sr.unmarshal(payload, msg)
+		if err := sr.unmarshal(payload, msg); err != nil {
+			sr.done = true
+			return err
+		}
+		return nil
 
 	case stream.FlagFinal:
 		if len(payload) > 0 {
@@ -262,10 +264,6 @@ func (sr *streamReader) Recv(msg proto.Message) error {
 
 func (sr *streamReader) Close() error {
 	sr.cancel()
-	if sr.done {
-		_ = sr.resp.Body.Close()
-		return nil
-	}
 	sr.done = true
 	return sr.resp.Body.Close()
 }

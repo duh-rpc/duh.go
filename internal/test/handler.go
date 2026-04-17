@@ -47,21 +47,16 @@ func (h *Handler) handleTestStream(r *http.Request, stream duh.StreamWriter) err
 	}
 
 	items, err := h.Service.TestStream(r.Context(), &req)
-	if err != nil {
-		// Send the data frames first, then return the error so HandleStream
-		// writes an error frame.
-		for _, item := range items {
-			if sendErr := stream.Send(item); sendErr != nil {
-				return sendErr
-			}
+
+	// Send all data frames before handling error or close
+	for _, item := range items {
+		if sendErr := stream.Send(item); sendErr != nil {
+			return sendErr
 		}
-		return err
 	}
 
-	for _, item := range items {
-		if err := stream.Send(item); err != nil {
-			return err
-		}
+	if err != nil {
+		return err
 	}
 
 	if req.CloseWithPayload {
