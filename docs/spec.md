@@ -331,7 +331,7 @@ A `429` that does not include a Reply body MUST be treated as an infrastructure-
 ### Request and Response Schemas
 Every operation MUST define a dedicated request schema and a dedicated response schema. Schemas MUST NOT be shared across operations. This ensures each operation has a clear, unambiguous contract and maps cleanly to generated code and protobuf message definitions.
 
-By convention, schemas are named after the operation they belong to, e.g. `CreateUserRequest` and `CreateUserResponse`, though any consistent naming convention is acceptable (camelCase, snake_case, or kebab-case). Tooling that generates protobuf definitions will normalize names to the appropriate convention.
+By convention, schemas are named after the operation they belong to, e.g. `UserCreateRequest` and `UserCreateResponse`, though any consistent naming convention is acceptable (camelCase, snake_case, or kebab-case). Tooling that generates protobuf definitions will normalize names to the appropriate convention.
 
 ### Streaming Endpoints
 
