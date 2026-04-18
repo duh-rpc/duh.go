@@ -496,6 +496,70 @@ func TestRetryOnInfraError(t *testing.T) {
 	assert.Equal(t, 3, attempts)
 }
 
+func TestSayHelloErrors(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name    string
+		req     string
+		wantMsg string
+	}{
+		{
+			name:    "empty name",
+			req:     "",
+			wantMsg: "'name' is required",
+		},
+		{
+			name:    "name not capitalized",
+			req:     "admiral thrawn",
+			wantMsg: "'name' must be capitalized",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := c.SayHello(ctx, &demo.SayHelloRequest{Name: tt.req}, &demo.SayHelloResponse{})
+			require.Error(t, err)
+
+			var duhErr *duh.ClientError
+			require.True(t, errors.As(err, &duhErr))
+			assert.Equal(t, duh.CodeBadRequest, duhErr.HTTPCode())
+			assert.Contains(t, duhErr.Message(), tt.wantMsg)
+		})
+	}
+}
+
+func TestListEventsStream(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	sr, err := c.ListEvents(ctx, &demo.ListEventsRequest{Count: 3})
+	require.NoError(t, err)
+	require.NotNil(t, sr)
+
+	for i := 0; i < 3; i++ {
+		var event demo.Event
+		require.NoError(t, sr.Recv(&event))
+		assert.Equal(t, int64(i), event.Sequence)
+		assert.Equal(t, fmt.Sprintf("event-%d", i), event.Message)
+	}
+
+	// Next Recv returns EOF after all events are consumed
+	var event demo.Event
+	assert.Equal(t, io.EOF, sr.Recv(&event))
+
+	require.NoError(t, sr.Close())
+}
+
 // TODO: Update the benchmark tests
 
 // TODO: DUH-RPC Validation Test for any endpoint
