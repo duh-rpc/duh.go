@@ -22,12 +22,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/duh-rpc/duh.go/v2"
 	"github.com/duh-rpc/duh.go/v2/demo"
 	"github.com/duh-rpc/duh.go/v2/internal/test"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
+	"github.com/duh-rpc/duh.go/v2/retry"
 	"github.com/duh-rpc/duh.go/v2/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -412,6 +415,85 @@ func TestDoBytesHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello, bytes", string(data))
 	require.NoError(t, rc.Close())
+}
+
+// fastRetryablePolicy mirrors duh.OnRetryable but with a 1ms sleep for test speed.
+var fastRetryablePolicy = retry.Policy{
+	Interval:     retry.Sleep(time.Millisecond),
+	OnCodes:      duh.RetryableCodes,
+	OnInfraCodes: duh.RetryableInfraCodes,
+	Attempts:     0,
+}
+
+func TestRetryOnRetryableServiceError(t *testing.T) {
+	var count atomic.Int32
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := count.Add(1)
+		if n <= 2 {
+			duh.ReplyWithCode(w, r, duh.CodeTooManyRequests, nil, "rate limited")
+			return
+		}
+		duh.Reply(w, r, duh.CodeOK, &v1.Reply{})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := duh.Client{Client: &http.Client{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attempts := 0
+	err := retry.On(ctx, fastRetryablePolicy, func(ctx context.Context, attempt int) error {
+		attempts++
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", duh.ContentTypeJSON)
+		return c.Do(req, &v1.Reply{})
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
+}
+
+func TestRetryOnInfraError(t *testing.T) {
+	var count atomic.Int32
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := count.Add(1)
+		if n <= 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("bad gateway"))
+			return
+		}
+		duh.Reply(w, r, duh.CodeOK, &v1.Reply{})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := duh.Client{Client: &http.Client{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attempts := 0
+	err := retry.On(ctx, fastRetryablePolicy, func(ctx context.Context, attempt int) error {
+		attempts++
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", duh.ContentTypeJSON)
+		return c.Do(req, &v1.Reply{})
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
 }
 
 // TODO: Update the benchmark tests
