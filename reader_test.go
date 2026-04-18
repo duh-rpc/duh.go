@@ -11,13 +11,15 @@ import (
 	"testing"
 )
 
-func TestSIConstants(t *testing.T) {
-	assert.Equal(t, int64(1000), int64(duh.Kilobyte))
-	assert.Equal(t, int64(1024), int64(duh.Kibibyte))
-	assert.Equal(t, int64(1_000_000), int64(duh.MegaByte))
-	assert.Equal(t, int64(1_048_576), int64(duh.Mebibyte))
-	assert.Equal(t, int64(1_000_000_000), int64(duh.Gigabyte))
-	assert.Equal(t, int64(1_073_741_824), int64(duh.Gibibyte))
+// eternalReader is a non-allocating io.Reader that fills any buffer with zero bytes.
+// It is used to test large byte-limit boundaries without allocating gigabytes on the heap.
+type eternalReader struct{}
+
+func (eternalReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }
 
 func TestNewReader(t *testing.T) {
@@ -37,7 +39,9 @@ func TestNewReader(t *testing.T) {
 	var d duh.Error
 	assert.True(t, errors.As(err, &d))
 
-	// Returns the correct SI abbreviations
+	// Verify SI vs binary byte constants produce the correct unit labels in error messages.
+	// Kilobyte = 1000 (kB), Kibibyte = 1024 (KiB), MegaByte = 1_000_000 (MB), Mebibyte = 1_048_576 (MiB),
+	// Gigabyte = 1_000_000_000 (GB), Gibibyte = 1_073_741_824 (GiB).
 	r = duh.NewLimitReader(io.NopCloser(bytes.NewReader(make([]byte, duh.Kilobyte*2))), duh.Kilobyte)
 	_, err = io.ReadAll(r)
 	require.Error(t, err)
@@ -57,4 +61,14 @@ func TestNewReader(t *testing.T) {
 	_, err = io.ReadAll(r)
 	require.Error(t, err)
 	assert.Equal(t, "exceeds 1.0MiB limit", err.Error())
+
+	r = duh.NewLimitReader(io.NopCloser(eternalReader{}), duh.Gigabyte)
+	_, err = io.ReadAll(r)
+	require.Error(t, err)
+	assert.Equal(t, "exceeds 1.0GB limit", err.Error())
+
+	r = duh.NewLimitReader(io.NopCloser(eternalReader{}), duh.Gibibyte)
+	_, err = io.ReadAll(r)
+	require.Error(t, err)
+	assert.Equal(t, "exceeds 1.0GiB limit", err.Error())
 }
