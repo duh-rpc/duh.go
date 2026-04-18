@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"testing"
@@ -85,7 +86,6 @@ func TestSetupTLS(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := http.Server{
-				Addr: "localhost:9685",
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					_, _ = fmt.Fprintln(w, "Hello, client")
 				}),
@@ -93,11 +93,14 @@ func TestSetupTLS(t *testing.T) {
 			}
 			defer func() { _ = srv.Close() }()
 
+			listener, err := net.Listen("tcp", "localhost:9685")
+			require.NoError(t, err)
+
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err = srv.ListenAndServeTLS("", "")
+				err := srv.ServeTLS(listener, "", "")
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					t.Logf("server listen error: %v", err)
 				}
@@ -131,7 +134,6 @@ func TestSetupTLSSkipVerify(t *testing.T) {
 	require.NoError(t, err)
 
 	srv := http.Server{
-		Addr: "localhost:9685",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintln(w, "Hello, client")
 		}),
@@ -139,11 +141,14 @@ func TestSetupTLSSkipVerify(t *testing.T) {
 	}
 	defer func() { _ = srv.Close() }()
 
+	listener, err := net.Listen("tcp", "localhost:9685")
+	require.NoError(t, err)
+
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err = srv.ListenAndServeTLS("", "")
+		err := srv.ServeTLS(listener, "", "")
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("server listen error: %v", err)
 		}
@@ -183,7 +188,6 @@ func TestSetupTLSClientAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	srv := http.Server{
-		Addr: "localhost:9685",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintln(w, "Hello, client")
 		}),
@@ -192,11 +196,14 @@ func TestSetupTLSClientAuth(t *testing.T) {
 	}
 	defer func() { _ = srv.Close() }()
 
+	listener, err := net.Listen("tcp", "localhost:9685")
+	require.NoError(t, err)
+
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err = srv.ListenAndServeTLS("", "")
+		err := srv.ServeTLS(listener, "", "")
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("server listen error: %v", err)
 		}

@@ -1,9 +1,9 @@
-# The DUH Spec V3
+# The DUH Spec V2
 Here we are presenting a general protocol approach to implementing RPC over HTTP. The benefit of using tried-and-true nature of HTTP for RPC allows designers to leverage the many tools and frameworks readily available to design, document, and implement high-performance HTTP APIs without overly complex client or deployment strategies.
 
 When using plain HTTP, a `404 Not Found` could mean a load balancer, API gateway, or proxy couldn't find your service at all — or it could mean your service couldn't find the requested resource. To the client, both look identical. DUH-RPC solves this by using the **Reply structure** as the definitive signal: any response that includes a well-formed Reply body originated from the service; any response that doesn't is treated as infrastructure. This distinction drives how clients interpret errors and whether they should retry.
 
-> The optional `Server: DUH-RPC/1.0` header can help identify service responses when the body isn't available (e.g., in logs), but it may be scrubbed by proxies and should not be relied upon programmatically.
+> The optional `Server: DUH-RPC/2.0` header can help identify service responses when the body isn't available (e.g., in logs), but it may be scrubbed by proxies and should not be relied upon programmatically.
 
 DUH method calls take the form `/v1/problem-domain/subject.method`
 
@@ -81,7 +81,7 @@ Content-Type: <MIME_type>/<MIME_subtype>
 
 The mime types supported can change depending on the method. This allows service implementations to migrate from older  mime types or to support mime types of a specific use case.
 
-If the server can accommodate none of the mime types, the server WILL return code `400` and a standard reply structure with the message  
+If the server can accommodate none of the mime types, the server WILL return HTTP status code `400` and a standard reply structure with the message  
 ```
 Accept header 'application/bson' is invalid format or unrecognized content type, only 
 [application/json, application/protobuf] are supported by this method
@@ -97,12 +97,14 @@ Standard replies from the service SHOULD follow a common structure. This provide
 #### Reply Structure
 The reply structure has the following fields.
 
-* **Code** (Required) — An application-level signal controlled by the implementor. It MAY be a numeric string
+* **Code** (Optional) — An application-level signal controlled by the implementor. It MAY be a numeric string
   (e.g. `"400"`, `"453"`) or a semantic string meaningful to the application (e.g. `"CARD_DECLINED"`,
   `"RATE_LIMITED"`). The HTTP status code is the authoritative signal for retry and routing decisions — client
   implementations MUST base retry logic on the HTTP status code, not the `code` field.
 * **Message** (Optional) — A human readable message.
-* **Details** — (Optional) A map of string key/value pairs providing additional context about this error, which could include a link to documentation explaining the error or additional machine-readable codes.
+* **Details** (Optional) — A map of string key/value pairs providing additional context about this error, which could include a link to documentation explaining the error or additional machine-readable codes.
+
+All fields are optional. A Reply MAY contain only `code`, only `message`, only `details`, or any combination. The presence of a well-formed Reply structure (even an empty one) is what distinguishes a service response from an infrastructure response — see [Infrastructure Errors](#infrastructure-errors).
 
 > Although the **Reply** structure is typically used for error replies, it CAN be used in normal `200` responses when there is a desire to avoid adding a new `<MethodCall>Response` type for simple method call which has no detailed responses.
 
@@ -215,7 +217,7 @@ The Client SHOULD handle responses that do not include the **Reply** structure a
 For example, if the client implementation receives an HTTP status code of `404` and a status message of `Not Found` from the request, the client SHOULD assume the error is from the infrastructure and inform the caller in a way that is suitable for the language used.
 
 ### Infrastructure Errors
-An infrastructure error is any HTTP response code that is NOT 200 and DOES NOT include a `Reply` structure in the body. If the client receives a response code and it DOES NOT include a `Reply` structure in the expected serialization format, then the client MUST consider the response as an infrastructure error and handling it accordingly.
+An infrastructure error is any HTTP response status code that is NOT 200 and DOES NOT include a `Reply` structure in the body. If the client receives a response code and it DOES NOT include a `Reply` structure in the expected serialization format, then the client MUST consider the response as an infrastructure error and handling it accordingly.
 
 Typically, infrastructure errors are 5XX class errors, but could also be 404 Not Found errors, or consist of 
 non-standard or future HTTP status codes. As such it is recommended that client implementations do not attempt to handle all possible HTTP codes, but instead consider any non 200 responses without a `Reply` an infrastructure class
@@ -224,7 +226,7 @@ error.
 A `404` is the most common example of this ambiguity. A service `404` — one that includes a Reply body — means the requested resource does not exist and should not be retried. An infrastructure `404` — one without a Reply body — means the request never reached the service and SHOULD be retried.
 
 ##### Service Identifiers
-In addition, the server CAN include the `Server: DUH-RPC/1.0 (Golang)` header according to [RFC9110](https://www.rfc-editor.org/rfc/rfc9110#field.server) to help identify the source of the HTTP Status. (It is possible that proxy or API gateways will scrub or overwrite this header as a security measure, which will make identification of the source more difficult) 
+In addition, the server CAN include the `Server: DUH-RPC/2.0 (Golang)` header according to [RFC9110](https://www.rfc-editor.org/rfc/rfc9110#field.server) to help identify the source of the HTTP Status. (It is possible that proxy or API gateways will scrub or overwrite this header as a security measure, which will make identification of the source more difficult) 
 
 ## Retry Semantics
 

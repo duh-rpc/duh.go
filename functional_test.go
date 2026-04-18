@@ -22,12 +22,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/duh-rpc/duh.go/v2"
 	"github.com/duh-rpc/duh.go/v2/demo"
 	"github.com/duh-rpc/duh.go/v2/internal/test"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
+	"github.com/duh-rpc/duh.go/v2/retry"
 	"github.com/duh-rpc/duh.go/v2/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -412,6 +415,149 @@ func TestDoBytesHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello, bytes", string(data))
 	require.NoError(t, rc.Close())
+}
+
+// fastRetryablePolicy mirrors duh.OnRetryable but with a 1ms sleep for test speed.
+var fastRetryablePolicy = retry.Policy{
+	Interval:     retry.Sleep(time.Millisecond),
+	OnCodes:      duh.RetryableCodes,
+	OnInfraCodes: duh.RetryableInfraCodes,
+	Attempts:     0,
+}
+
+func TestRetryOnRetryableServiceError(t *testing.T) {
+	var count atomic.Int32
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := count.Add(1)
+		if n <= 2 {
+			duh.ReplyWithCode(w, r, duh.CodeTooManyRequests, nil, "rate limited")
+			return
+		}
+		duh.Reply(w, r, duh.CodeOK, &v1.Reply{})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := duh.Client{Client: &http.Client{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attempts := 0
+	err := retry.On(ctx, fastRetryablePolicy, func(ctx context.Context, attempt int) error {
+		attempts++
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", duh.ContentTypeJSON)
+		return c.Do(req, &v1.Reply{})
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
+}
+
+func TestRetryOnInfraError(t *testing.T) {
+	var count atomic.Int32
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := count.Add(1)
+		if n <= 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("bad gateway"))
+			return
+		}
+		duh.Reply(w, r, duh.CodeOK, &v1.Reply{})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := duh.Client{Client: &http.Client{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	attempts := 0
+	err := retry.On(ctx, fastRetryablePolicy, func(ctx context.Context, attempt int) error {
+		attempts++
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", duh.ContentTypeJSON)
+		return c.Do(req, &v1.Reply{})
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts)
+}
+
+func TestSayHelloErrors(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name    string
+		req     string
+		wantMsg string
+	}{
+		{
+			name:    "empty name",
+			req:     "",
+			wantMsg: "'name' is required",
+		},
+		{
+			name:    "name not capitalized",
+			req:     "admiral thrawn",
+			wantMsg: "'name' must be capitalized",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := c.SayHello(ctx, &demo.SayHelloRequest{Name: tt.req}, &demo.SayHelloResponse{})
+			require.Error(t, err)
+
+			var duhErr *duh.ClientError
+			require.True(t, errors.As(err, &duhErr))
+			assert.Equal(t, duh.CodeBadRequest, duhErr.HTTPCode())
+			assert.Contains(t, duhErr.Message(), tt.wantMsg)
+		})
+	}
+}
+
+func TestListEventsStream(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	sr, err := c.ListEvents(ctx, &demo.ListEventsRequest{Count: 3})
+	require.NoError(t, err)
+	require.NotNil(t, sr)
+
+	for i := 0; i < 3; i++ {
+		var event demo.Event
+		require.NoError(t, sr.Recv(&event))
+		assert.Equal(t, int64(i), event.Sequence)
+		assert.Equal(t, fmt.Sprintf("event-%d", i), event.Message)
+	}
+
+	// Next Recv returns EOF after all events are consumed
+	var event demo.Event
+	assert.Equal(t, io.EOF, sr.Recv(&event))
+
+	require.NoError(t, sr.Close())
 }
 
 // TODO: Update the benchmark tests
