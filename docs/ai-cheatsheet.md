@@ -214,3 +214,56 @@ These constraints ensure schemas can be represented as protobuf messages:
 | No `allOf` | No protobuf equivalent |
 | No `anyOf` | Ambiguous typing, no protobuf equivalent |
 | `oneOf` only with discriminator + mapping | Bare `oneOf` is not permitted |
+
+## Streaming
+
+Three streaming content types:
+
+| Content Type | Encoding | Use Case |
+|---|---|---|
+| `application/octet-stream` | Raw bytes | Unstructured binary transfer |
+| `application/duh-stream+json` | JSON | Server-to-client structured stream |
+| `application/duh-stream+protobuf` | Protobuf | Server-to-client structured stream |
+
+All streaming endpoints use POST.
+
+### Unstructured Streams (`application/octet-stream`)
+
+- Errors MUST be returned as a Reply **before** any bytes are sent. Once bytes flow, there is no way to inject a Reply.
+- A `200` with `Content-Type: application/octet-stream` means raw bytes — do NOT parse as Reply.
+- Mid-stream disconnection is an infrastructure error. Client MAY retry from the beginning.
+- Resumable transfers supported via standard HTTP `Range` / `Content-Range` headers (optional).
+
+### Structured Streams (`duh-stream+json` / `duh-stream+protobuf`)
+
+A sequence of typed messages over a single HTTP response. One payload type per stream.
+
+**Wire format — length-prefix framing:**
+```
+[ 1 byte: flag ][ 4 bytes: uint32 big-endian length ][ N bytes: payload ]
+```
+
+**Frame types:**
+
+| Flag | Meaning | Payload | Terminal |
+|---|---|---|---|
+| `0x0` | Data frame | Single instance of the stream's payload type | No |
+| `0x1` | Final frame | Same payload type (MAY be empty, length=0) | Yes |
+| `0x2` | Error frame | Reply structure | Yes |
+
+Rules:
+- After a final or error frame, the stream is closed. No further frames.
+- The client MUST be prepared to receive an error frame at any point, not just the start.
+- `Content-Type` on response echoes the client's `Accept` header.
+- The JSON fallback rule does **not** apply to streaming. If the server cannot satisfy the requested stream content type, return `400` with a Reply. No silent fallback.
+- Mid-stream disconnection before final/error frame is an infrastructure error. Client MAY retry from the beginning.
+
+**Resumption:** Not built into the framing layer. To support resumption, encode a `sequence` field in your payload type. On reconnect, the client sends the last received sequence in the request body.
+
+### Browser Clients
+
+Do NOT use SSE / `EventSource` (GET-only, no request body). Use `application/duh-stream+json` via `fetch()`.
+
+### Bidirectional Streams
+
+Not yet defined.
