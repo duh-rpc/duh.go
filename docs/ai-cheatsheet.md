@@ -179,8 +179,8 @@ Cursor-based forward pagination only. No `limit`, `offset`, or `page` parameters
 {
   "items": [...],
   "pagination": {
-    "endCursor": "cursor_xyz",
-    "hasNextPage": true
+    "end_cursor": "cursor_xyz",
+    "has_next_page": true
   }
 }
 ```
@@ -188,10 +188,10 @@ Cursor-based forward pagination only. No `limit`, `offset`, or `page` parameters
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `items` | array | Yes | Page of results |
-| `pagination.endCursor` | string | Yes | Cursor for next page |
-| `pagination.hasNextPage` | boolean | Yes | More results exist |
+| `pagination.end_cursor` | string | Yes | Cursor for next page |
+| `pagination.has_next_page` | boolean | Yes | More results exist |
 
-Stop requesting when `hasNextPage` is `false`.
+Stop requesting when `has_next_page` is `false`.
 
 An endpoint is paginated if its response has `items` + `pagination`. Actions like `.list` and `.search` that return collections SHOULD be paginated.
 
