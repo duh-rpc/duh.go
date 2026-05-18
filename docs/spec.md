@@ -396,10 +396,10 @@ Paginated responses MUST include the following structure:
 | Field                    | Type    | Required | Description                                         |
 | ------------------------ | ------- | -------- | --------------------------------------------------- |
 | `items`                  | array   | Yes      | The page of results                                 |
-| `pagination.endCursor`   | string  | Yes      | Cursor to pass as `after` to retrieve the next page |
-| `pagination.hasNextPage` | boolean | Yes      | Whether additional results exist beyond this page   |
+| `pagination.end_cursor`   | string  | Yes      | Cursor to pass as `after` to retrieve the next page |
+| `pagination.has_next_page` | boolean | Yes      | Whether additional results exist beyond this page   |
 
-When `hasNextPage` is `false`, the client SHOULD NOT make a further request. When `hasNextPage` is `true` and `endCursor` is present, the client MAY request the next page by passing `endCursor` as `pagination.after`.
+When `has_next_page` is `false`, the client SHOULD NOT make a further request. When `has_next_page` is `true` and `end_cursor` is present, the client MAY request the next page by passing `end_cursor` as `pagination.after`.
 
 ### Prohibited Pagination Patterns
 The following parameter names are prohibited as they imply offset-style pagination: `limit`, `offset`, and `page` as a standalone parameter name (i.e. a top-level integer page number). The `pagination` sub-object described above is the only permitted use of pagination parameters.

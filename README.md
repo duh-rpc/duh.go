@@ -116,7 +116,7 @@ For a deeper dive on REST, see [Why not REST](docs/why-not-rest.md).
 * Standard rate limit response semantics, so client libraries can handle backoff uniformly.
 * Consistent request body contract — even parameter-less calls send an empty body, eliminating nil-check branches on the server.
 * Schema constraints that guarantee protobuf compatibility, enabling seamless code generation.
-* Built-in cursor-based pagination semantics for collection endpoints. Because pagination is standardized across every service, you can use a single shared iterator library to page through results from any endpoint in your inventory — wrap your call in a `fetch` function, and the iterator handles cursors, `hasNextPage` checks, and retries automatically:
+* Built-in cursor-based pagination semantics for collection endpoints. Because pagination is standardized across every service, you can use a single shared iterator library to page through results from any endpoint in your inventory — wrap your call in a `fetch` function, and the iterator handles cursors, `has_next_page` checks, and retries automatically:
   ```go
   iter := duh.NewIterator(func(ctx context.Context, cursor string) ([]User, duh.Page, error) {
       resp, err := client.Post(ctx, "/v1/users.list", &ListRequest{Cursor: cursor}, &ListResponse{})
