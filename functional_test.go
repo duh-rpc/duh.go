@@ -560,6 +560,97 @@ func TestListEventsStream(t *testing.T) {
 	require.NoError(t, sr.Close())
 }
 
+func TestContentUploadHappyPath(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	err := c.UploadContent(ctx, "/pages/home", "text/html; charset=utf-8", []byte("<html><body>Hello</body></html>"))
+	require.NoError(t, err)
+}
+
+func TestContentDownloadHappyPath(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	const htmlBody = "<html><body>Hello</body></html>"
+	require.NoError(t, c.UploadContent(ctx, "/pages/home", "text/html; charset=utf-8", []byte(htmlBody)))
+
+	var buf bytes.Buffer
+	headers, err := c.DownloadContent(ctx, "/pages/home", &buf)
+	require.NoError(t, err)
+	require.NotNil(t, headers)
+
+	assert.Equal(t, htmlBody, buf.String())
+	assert.Equal(t, "text/html; charset=utf-8", headers.Get("Content-Type"))
+	assert.Equal(t, duh.DUHVersion, headers.Get(duh.HeaderDUHVersion))
+}
+
+func TestContentUploadErrors(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name        string
+		path        string
+		contentType string
+		body        []byte
+		wantMsg     string
+	}{
+		{
+			name:        "missing X-RPC-Path header",
+			path:        "",
+			contentType: "text/html",
+			body:        []byte("<html></html>"),
+			wantMsg:     "X-RPC-Path header is required",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := c.UploadContent(ctx, tt.path, tt.contentType, tt.body)
+			require.Error(t, err)
+
+			var duhErr *duh.ClientError
+			require.True(t, errors.As(err, &duhErr))
+			assert.Equal(t, duh.CodeBadRequest, duhErr.HTTPCode())
+			assert.Contains(t, duhErr.Message(), tt.wantMsg)
+		})
+	}
+}
+
+func TestContentDownloadNotFound(t *testing.T) {
+	server := httptest.NewServer(&demo.Handler{Service: demo.NewService()})
+	defer server.Close()
+
+	c := demo.NewClient(demo.ClientConfig{Endpoint: server.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	var buf bytes.Buffer
+	headers, err := c.DownloadContent(ctx, "/no/such/path", &buf)
+	require.Error(t, err)
+	require.Nil(t, headers)
+
+	var ce *duh.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, duh.CodeNotFound, ce.HTTPCode())
+	assert.False(t, ce.IsInfraError())
+}
+
 // TODO: Update the benchmark tests
 
 // TODO: DUH-RPC Validation Test for any endpoint

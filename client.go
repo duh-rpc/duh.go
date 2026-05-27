@@ -275,6 +275,42 @@ func (c *Client) DoBytes(ctx context.Context, req *http.Request) (io.ReadCloser,
 	return resp.Body, nil
 }
 
+// DoContent sends the request and buffers the response body into the caller-provided buf.
+// On success it returns the response headers (including Content-Type and X-RPC-* metadata).
+// On non-200 it returns nil headers and the classified error (service or infra).
+// Unlike DoBytes, DoContent accepts any Content-Type on 200 and eagerly buffers the body.
+func (c *Client) DoContent(ctx context.Context, req *http.Request, buf *bytes.Buffer) (http.Header, error) {
+	req = req.WithContext(ctx)
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, NewClientError("during client.Do(): %w", err, map[string]string{
+			DetailsHttpUrl:    req.URL.String(),
+			DetailsHttpMethod: req.Method,
+		})
+	}
+
+	if resp.StatusCode != CodeOK {
+		return nil, handleErrorResponse(req, resp)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if _, err := io.Copy(buf, resp.Body); err != nil {
+		return nil, &ClientError{
+			err: fmt.Errorf("while reading response body: %w", err),
+			details: map[string]string{
+				DetailsHttpUrl:    req.URL.String(),
+				DetailsHttpMethod: req.Method,
+				DetailsHttpStatus: resp.Status,
+			},
+			code:     strconv.Itoa(CodeClientError),
+			httpCode: CodeClientError,
+		}
+	}
+
+	return resp.Header, nil
+}
+
 // unmarshalForMediaType returns the appropriate unmarshal function for the given
 // Content-Type header value. Returns false if the media type is not recognized.
 func unmarshalForMediaType(contentType string) (func([]byte, proto.Message) error, bool) {
@@ -307,13 +343,52 @@ func handleErrorResponse(req *http.Request, resp *http.Response) error {
 		}
 	}
 
+	// Step 1: Content-Type-based detection (primary signal, preserves backward compatibility
+	// with old servers that do not send X-DUH-Version).
 	unmarshalFn, ok := unmarshalForMediaType(resp.Header.Get("Content-Type"))
-	if !ok {
+	if ok {
+		var reply v1.Reply
+		if err := unmarshalFn(body.Bytes(), &reply); err != nil {
+			return NewInfraError(req, resp, body.Bytes())
+		}
+		return NewReplyError(req, resp, &reply)
+	}
+
+	// Step 2: X-DUH-Version header fallback. Used when Content-Type is unrecognized
+	// (e.g., content endpoints where middleware may overwrite Content-Type).
+	if resp.Header.Get(HeaderDUHVersion) != "" {
+		var reply v1.Reply
+		// Try JSON first (spec default), then protobuf.
+		if err := json.Unmarshal(body.Bytes(), &reply); err != nil {
+			if err := proto.Unmarshal(body.Bytes(), &reply); err != nil {
+				// Header present but body is not a valid Reply -- malformed service response.
+				return NewInfraError(req, resp, body.Bytes())
+			}
+		}
+		return NewReplyError(req, resp, &reply)
+	}
+
+	// Step 3: No Content-Type signal and no version header. Classify by HTTP status code
+	// per the spec's infrastructure error rules (§Infrastructure Errors):
+	// 5xx and 404 are the codes infrastructure components produce when a request fails
+	// to reach the service -- these are retried.
+	// Other status codes (400, 401, 403, etc.) indicate a non-conforming service, not
+	// infrastructure -- these are NOT retried.
+	code := resp.StatusCode
+	if code/100 == 5 || code == CodeNotFound {
 		return NewInfraError(req, resp, body.Bytes())
 	}
-	var reply v1.Reply
-	if err := unmarshalFn(body.Bytes(), &reply); err != nil {
-		return NewInfraError(req, resp, body.Bytes())
+	return &ClientError{
+		details: map[string]string{
+			DetailsHttpCode:   strconv.Itoa(resp.StatusCode),
+			DetailsHttpBody:   body.String(),
+			DetailsHttpUrl:    req.URL.String(),
+			DetailsHttpStatus: resp.Status,
+			DetailsHttpMethod: req.Method,
+		},
+		msg:          body.String(),
+		code:         strconv.Itoa(resp.StatusCode),
+		httpCode:     resp.StatusCode,
+		isInfraError: false,
 	}
-	return NewReplyError(req, resp, &reply)
 }

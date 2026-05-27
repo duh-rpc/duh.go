@@ -1,6 +1,7 @@
 package duh_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -259,6 +260,7 @@ func TestDoStreamErrors(t *testing.T) {
 				}
 				b, _ := json.Marshal(reply)
 				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write(b)
 			},
@@ -347,6 +349,7 @@ func TestDoBytesErrors(t *testing.T) {
 				}
 				b, _ := json.Marshal(reply)
 				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write(b)
 			},
@@ -426,4 +429,246 @@ func TestDoBytesErrors(t *testing.T) {
 		require.True(t, errors.As(err, &ce))
 		assert.Equal(t, duh.CodeClientError, ce.HTTPCode())
 	})
+}
+
+func TestDoContentErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		isInfra  bool
+		checkMsg string
+	}{
+		{
+			name: "ServerReturns400WithReplyBody",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{
+					Code:    "400",
+					Message: "bad request: invalid content",
+				}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode: http.StatusBadRequest,
+			checkMsg: "bad request: invalid content",
+		},
+		{
+			name: "ServerReturns502WithNoReplyOrHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte("upstream error"))
+			},
+			wantCode: http.StatusBadGateway,
+			isInfra:  true,
+			checkMsg: "upstream error",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			c := &duh.Client{Client: &http.Client{}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/content.download", nil)
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			headers, err := c.DoContent(ctx, req, &buf)
+			require.Error(t, err)
+			require.Nil(t, headers)
+
+			var ce *duh.ClientError
+			require.True(t, errors.As(err, &ce))
+			assert.Equal(t, tt.wantCode, ce.HTTPCode())
+			assert.Contains(t, ce.Message(), tt.checkMsg)
+			assert.Equal(t, tt.isInfra, ce.IsInfraError())
+		})
+	}
+
+	// Transport failure
+	t.Run("TransportFailure", func(t *testing.T) {
+		c := &duh.Client{Client: &http.Client{}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:1/v1/content.download", nil)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		headers, err := c.DoContent(ctx, req, &buf)
+		require.Error(t, err)
+		require.Nil(t, headers)
+
+		var ce *duh.ClientError
+		require.True(t, errors.As(err, &ce))
+		assert.Equal(t, duh.CodeClientError, ce.HTTPCode())
+	})
+}
+
+func TestVersionHeaderOnReply(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		statusCode int
+	}{
+		{name: "200 OK", statusCode: duh.CodeOK},
+		{name: "400 Bad Request", statusCode: duh.CodeBadRequest},
+		{name: "500 Internal Error", statusCode: duh.CodeInternalError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				duh.Reply(w, r, tt.statusCode, &v1.Reply{Code: "200", Message: "ok"})
+			}))
+			defer server.Close()
+
+			resp, err := http.Post(server.URL+"/v1/test", duh.ContentTypeJSON, nil)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Equal(t, duh.DUHVersion, resp.Header.Get(duh.HeaderDUHVersion))
+		})
+	}
+}
+
+func TestVersionHeaderOnStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			return sw.Close(nil)
+		})
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	// Use raw http.Client to access resp.Header directly -- DoStream returns a
+	// StreamReader interface that does not expose the underlying *http.Response.
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, duh.DUHVersion, resp.Header.Get(duh.HeaderDUHVersion))
+}
+
+func TestInfraDetectionByHeader(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name        string
+		handler     http.HandlerFunc
+		wantCode    int
+		isInfra     bool
+		isServiceOK bool // true when we expect a service error (not infra)
+	}{
+		{
+			// Recognized Content-Type + Reply body = service error regardless of header.
+			// This backward-compat path handles old servers (no X-DUH-Version header).
+			name: "RecognizedContentTypeNoHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{Code: "400", Message: "service error via content-type"}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode:    http.StatusBadRequest,
+			isInfra:     false,
+			isServiceOK: true,
+		},
+		{
+			// Unrecognized Content-Type + X-DUH-Version header = service error (header fallback).
+			name: "UnrecognizedContentTypeWithHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{Code: "400", Message: "service error via header fallback"}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode:    http.StatusBadRequest,
+			isInfra:     false,
+			isServiceOK: true,
+		},
+		{
+			// Unrecognized Content-Type + no header + 5xx = infra error (retried).
+			name: "UnrecognizedContentTypeNoHeaderOn5xx",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte("upstream timeout"))
+			},
+			wantCode: http.StatusBadGateway,
+			isInfra:  true,
+		},
+		{
+			// Unrecognized Content-Type + no header + 404 = infra error (retried per RetryableInfraCodes).
+			name: "UnrecognizedContentTypeNoHeaderOn404",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte("Not Found"))
+			},
+			wantCode: http.StatusNotFound,
+			isInfra:  true,
+		},
+		{
+			// Unrecognized Content-Type + no header + 400 = non-conforming service error (NOT retried).
+			name: "UnrecognizedContentTypeNoHeaderOn400",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("bad input"))
+			},
+			wantCode: http.StatusBadRequest,
+			isInfra:  false,
+		},
+		{
+			// 404 with X-DUH-Version header = service error (not infra, not retried).
+			name: "404WithVersionHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{Code: "404", Message: "resource not found"}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write(b)
+			},
+			wantCode:    http.StatusNotFound,
+			isInfra:     false,
+			isServiceOK: true,
+		},
+		{
+			// 404 without X-DUH-Version header and unrecognized content-type = infra error (retried).
+			name: "404WithoutVersionHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte("Not Found"))
+			},
+			wantCode: http.StatusNotFound,
+			isInfra:  true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			c := &duh.Client{Client: &http.Client{}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test", nil)
+			require.NoError(t, err)
+
+			err = c.Do(req, &v1.Reply{})
+			require.Error(t, err)
+
+			var ce *duh.ClientError
+			require.True(t, errors.As(err, &ce))
+			assert.Equal(t, tt.wantCode, ce.HTTPCode())
+			assert.Equal(t, tt.isInfra, ce.IsInfraError())
+		})
+	}
 }
