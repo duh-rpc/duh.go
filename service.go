@@ -34,6 +34,9 @@ const (
 	ContentOctetStream    = "application/octet-stream"
 	ContentStreamJSON     = "application/duh-stream+json"
 	ContentStreamProtoBuf = "application/duh-stream+protobuf"
+
+	HeaderDUHVersion = "X-DUH-Version"
+	DUHVersion       = "2.0"
 )
 
 var (
@@ -130,9 +133,17 @@ func Reply(w http.ResponseWriter, r *http.Request, code int, resp proto.Message)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	setServiceHeaders(w)
 	w.WriteHeader(code)
 	_, _ = w.Write(b)
+}
+
+// setServiceHeaders sets the standard DUH service response headers.
+// Called by Reply and WriteContent to ensure all service responses
+// include the version header and content-type options.
+func setServiceHeaders(w http.ResponseWriter) {
+	w.Header().Set(HeaderDUHVersion, DUHVersion)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 // TrimSuffix trims everything after the first separator is found

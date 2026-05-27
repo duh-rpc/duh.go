@@ -307,13 +307,52 @@ func handleErrorResponse(req *http.Request, resp *http.Response) error {
 		}
 	}
 
+	// Step 1: Content-Type-based detection (primary signal, preserves backward compatibility
+	// with old servers that do not send X-DUH-Version).
 	unmarshalFn, ok := unmarshalForMediaType(resp.Header.Get("Content-Type"))
-	if !ok {
+	if ok {
+		var reply v1.Reply
+		if err := unmarshalFn(body.Bytes(), &reply); err != nil {
+			return NewInfraError(req, resp, body.Bytes())
+		}
+		return NewReplyError(req, resp, &reply)
+	}
+
+	// Step 2: X-DUH-Version header fallback. Used when Content-Type is unrecognized
+	// (e.g., content endpoints where middleware may overwrite Content-Type).
+	if resp.Header.Get(HeaderDUHVersion) != "" {
+		var reply v1.Reply
+		// Try JSON first (spec default), then protobuf.
+		if err := json.Unmarshal(body.Bytes(), &reply); err != nil {
+			if err := proto.Unmarshal(body.Bytes(), &reply); err != nil {
+				// Header present but body is not a valid Reply -- malformed service response.
+				return NewInfraError(req, resp, body.Bytes())
+			}
+		}
+		return NewReplyError(req, resp, &reply)
+	}
+
+	// Step 3: No Content-Type signal and no version header. Classify by HTTP status code
+	// per the spec's infrastructure error rules (§Infrastructure Errors):
+	// 5xx and 404 are the codes infrastructure components produce when a request fails
+	// to reach the service -- these are retried.
+	// Other status codes (400, 401, 403, etc.) indicate a non-conforming service, not
+	// infrastructure -- these are NOT retried.
+	code := resp.StatusCode
+	if code/100 == 5 || code == CodeNotFound {
 		return NewInfraError(req, resp, body.Bytes())
 	}
-	var reply v1.Reply
-	if err := unmarshalFn(body.Bytes(), &reply); err != nil {
-		return NewInfraError(req, resp, body.Bytes())
+	return &ClientError{
+		details: map[string]string{
+			DetailsHttpCode:   strconv.Itoa(resp.StatusCode),
+			DetailsHttpBody:   body.String(),
+			DetailsHttpUrl:    req.URL.String(),
+			DetailsHttpStatus: resp.Status,
+			DetailsHttpMethod: req.Method,
+		},
+		msg:          body.String(),
+		code:         strconv.Itoa(resp.StatusCode),
+		httpCode:     resp.StatusCode,
+		isInfraError: false,
 	}
-	return NewReplyError(req, resp, &reply)
 }
