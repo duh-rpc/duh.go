@@ -138,6 +138,48 @@ func Reply(w http.ResponseWriter, r *http.Request, code int, resp proto.Message)
 	_, _ = w.Write(b)
 }
 
+// ReadContent reads the raw request body and returns the bytes, the raw Content-Type header
+// value, and any error. Unlike ReadRequest, the Content-Type is not normalized — content
+// endpoints may need MIME parameters like charset=utf-8.
+// A limit of 0 means no limit is applied. Empty bodies and empty Content-Type are not errors.
+func ReadContent(r *http.Request, limit int64) ([]byte, string, error) {
+	var b bytes.Buffer
+	body := r.Body
+	defer func() { _ = body.Close() }()
+
+	if limit > 0 {
+		body = NewLimitReader(body, limit)
+	}
+
+	_, err := io.Copy(&b, body)
+	if err != nil {
+		var e Error
+		if errors.As(err, &e) {
+			return nil, "", NewServiceError(e.HTTPCode(), fmt.Sprintf("request body %s", e.Message()), nil, nil)
+		}
+		return nil, "", NewServiceError(CodeInternalError, "", err, nil)
+	}
+
+	return b.Bytes(), r.Header.Get("Content-Type"), nil
+}
+
+// WriteContent writes a raw content response with the given Content-Type and body.
+// It sets X-DUH-Version and X-Content-Type-Options headers via setServiceHeaders.
+func WriteContent(w http.ResponseWriter, contentType string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
+	setServiceHeaders(w)
+	w.WriteHeader(CodeOK)
+	_, _ = w.Write(body)
+}
+
+// ReplyContentError writes an error Reply for content endpoint errors.
+// It delegates to ReplyError so the Accept header is respected and the version header is set.
+// This function exists as a named entry point for content endpoint handlers, parallel to
+// ReplyError for structured handlers, allowing future content-specific behavior.
+func ReplyContentError(w http.ResponseWriter, r *http.Request, err error) {
+	ReplyError(w, r, err)
+}
+
 // setServiceHeaders sets the standard DUH service response headers.
 // Called by Reply and WriteContent to ensure all service responses
 // include the version header and content-type options.

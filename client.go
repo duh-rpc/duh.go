@@ -275,6 +275,42 @@ func (c *Client) DoBytes(ctx context.Context, req *http.Request) (io.ReadCloser,
 	return resp.Body, nil
 }
 
+// DoContent sends the request and buffers the response body into the caller-provided buf.
+// On success it returns the response headers (including Content-Type and X-RPC-* metadata).
+// On non-200 it returns nil headers and the classified error (service or infra).
+// Unlike DoBytes, DoContent accepts any Content-Type on 200 and eagerly buffers the body.
+func (c *Client) DoContent(ctx context.Context, req *http.Request, buf *bytes.Buffer) (http.Header, error) {
+	req = req.WithContext(ctx)
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, NewClientError("during client.Do(): %w", err, map[string]string{
+			DetailsHttpUrl:    req.URL.String(),
+			DetailsHttpMethod: req.Method,
+		})
+	}
+
+	if resp.StatusCode != CodeOK {
+		return nil, handleErrorResponse(req, resp)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if _, err := io.Copy(buf, resp.Body); err != nil {
+		return nil, &ClientError{
+			err: fmt.Errorf("while reading response body: %w", err),
+			details: map[string]string{
+				DetailsHttpUrl:    req.URL.String(),
+				DetailsHttpMethod: req.Method,
+				DetailsHttpStatus: resp.Status,
+			},
+			code:     strconv.Itoa(CodeClientError),
+			httpCode: CodeClientError,
+		}
+	}
+
+	return resp.Header, nil
+}
+
 // unmarshalForMediaType returns the appropriate unmarshal function for the given
 // Content-Type header value. Returns false if the media type is not recognized.
 func unmarshalForMediaType(contentType string) (func([]byte, proto.Message) error, bool) {

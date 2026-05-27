@@ -47,3 +47,7 @@ message Event {
   int64 sequence = 1;
   string message = 2;
 }
+
+message ContentDownloadRequest {
+  string path = 1;
+}

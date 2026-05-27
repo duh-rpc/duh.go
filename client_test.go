@@ -1,6 +1,7 @@
 package duh_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -423,6 +424,83 @@ func TestDoBytesErrors(t *testing.T) {
 		rc, err := c.DoBytes(ctx, req)
 		require.Error(t, err)
 		require.Nil(t, rc)
+
+		var ce *duh.ClientError
+		require.True(t, errors.As(err, &ce))
+		assert.Equal(t, duh.CodeClientError, ce.HTTPCode())
+	})
+}
+
+func TestDoContentErrors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	for _, tt := range []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		isInfra  bool
+		checkMsg string
+	}{
+		{
+			name: "ServerReturns400WithReplyBody",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				reply := &v1.Reply{
+					Code:    "400",
+					Message: "bad request: invalid content",
+				}
+				b, _ := json.Marshal(reply)
+				w.Header().Set("Content-Type", duh.ContentTypeJSON)
+				w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(b)
+			},
+			wantCode: http.StatusBadRequest,
+			checkMsg: "bad request: invalid content",
+		},
+		{
+			name: "ServerReturns502WithNoReplyOrHeader",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte("upstream error"))
+			},
+			wantCode: http.StatusBadGateway,
+			isInfra:  true,
+			checkMsg: "upstream error",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			c := &duh.Client{Client: &http.Client{}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/content.download", nil)
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			headers, err := c.DoContent(ctx, req, &buf)
+			require.Error(t, err)
+			require.Nil(t, headers)
+
+			var ce *duh.ClientError
+			require.True(t, errors.As(err, &ce))
+			assert.Equal(t, tt.wantCode, ce.HTTPCode())
+			assert.Contains(t, ce.Message(), tt.checkMsg)
+			assert.Equal(t, tt.isInfra, ce.IsInfraError())
+		})
+	}
+
+	// Transport failure
+	t.Run("TransportFailure", func(t *testing.T) {
+		c := &duh.Client{Client: &http.Client{}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:1/v1/content.download", nil)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		headers, err := c.DoContent(ctx, req, &buf)
+		require.Error(t, err)
+		require.Nil(t, headers)
 
 		var ce *duh.ClientError
 		require.True(t, errors.As(err, &ce))

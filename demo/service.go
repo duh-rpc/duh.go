@@ -17,6 +17,7 @@ package demo
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/duh-rpc/duh.go/v2"
 	"golang.org/x/text/cases"
@@ -25,7 +26,9 @@ import (
 
 // NewService creates a new service instance
 func NewService() *Service {
-	return &Service{}
+	return &Service{
+		content: make(map[string]contentEntry),
+	}
 }
 
 // TODO: Define abstracted errors here
@@ -33,8 +36,16 @@ func NewService() *Service {
 // ErrBadRequest
 // ErrRequestFailed
 
+type contentEntry struct {
+	contentType string
+	body        []byte
+}
+
 // Service is an example of a production ready service implementation
-type Service struct{}
+type Service struct {
+	mu      sync.RWMutex
+	content map[string]contentEntry
+}
 
 func (h *Service) SayHello(ctx context.Context, req *SayHelloRequest, resp *SayHelloResponse) error {
 	if req.Name == "" {
@@ -75,6 +86,25 @@ func (h *Service) ListEvents(ctx context.Context, req *ListEventsRequest) ([]*Ev
 		})
 	}
 	return events, nil
+}
+
+// StoreContent stores raw content identified by path.
+func (s *Service) StoreContent(_ context.Context, path string, contentType string, body []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.content[path] = contentEntry{contentType: contentType, body: body}
+	return nil
+}
+
+// GetContent retrieves previously stored content by path.
+func (s *Service) GetContent(_ context.Context, path string) (string, []byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.content[path]
+	if !ok {
+		return "", nil, duh.NewServiceError(duh.CodeNotFound, "content not found", nil, nil)
+	}
+	return entry.contentType, entry.body, nil
 }
 
 func norm(x, total int64, min, max float64) float64 {

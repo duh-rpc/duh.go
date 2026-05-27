@@ -17,8 +17,10 @@ package demo
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/duh-rpc/duh.go/v2"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 )
 
 type Handler struct {
@@ -52,6 +54,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/v1/bytes.download":
 		h.handleDownloadBytes(w, r)
+		return
+	case "/v1/content.upload":
+		h.handleContentUpload(w, r)
+		return
+	case "/v1/content.download":
+		h.handleContentDownload(w, r)
 		return
 	}
 	duh.ReplyWithCode(w, r, duh.CodeNotImplemented, nil, "no such method; "+r.URL.Path)
@@ -110,4 +118,43 @@ func (h *Handler) handleRenderPixel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	duh.Reply(w, r, duh.CodeOK, &resp)
+}
+
+func (h *Handler) handleContentUpload(w http.ResponseWriter, r *http.Request) {
+	body, contentType, err := duh.ReadContent(r, 10*duh.MegaByte)
+	if err != nil {
+		duh.ReplyContentError(w, r, err)
+		return
+	}
+	path := r.Header.Get("X-RPC-Path")
+	if path == "" {
+		duh.ReplyContentError(w, r, duh.NewServiceError(duh.CodeBadRequest, "X-RPC-Path header is required", nil, nil))
+		return
+	}
+	if err := h.Service.StoreContent(r.Context(), path, contentType, body); err != nil {
+		duh.ReplyContentError(w, r, err)
+		return
+	}
+	duh.Reply(w, r, duh.CodeOK, &v1.Reply{
+		Code:    strconv.Itoa(duh.CodeOK),
+		Message: "content stored",
+		Details: map[string]string{
+			"path": path,
+			"size": strconv.Itoa(len(body)),
+		},
+	})
+}
+
+func (h *Handler) handleContentDownload(w http.ResponseWriter, r *http.Request) {
+	var req ContentDownloadRequest
+	if err := duh.ReadRequest(r, &req, 5*duh.MegaByte); err != nil {
+		duh.ReplyError(w, r, err)
+		return
+	}
+	contentType, body, err := h.Service.GetContent(r.Context(), req.Path)
+	if err != nil {
+		duh.ReplyContentError(w, r, err)
+		return
+	}
+	duh.WriteContent(w, contentType, body)
 }

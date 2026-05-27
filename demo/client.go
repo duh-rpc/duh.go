@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	"github.com/duh-rpc/duh.go/v2"
+	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	json "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -97,6 +98,36 @@ func (c *Client) DownloadBytes(ctx context.Context) (io.ReadCloser, error) {
 
 	r.Header.Set("Accept", duh.ContentOctetStream)
 	return c.DoBytes(ctx, r)
+}
+
+// UploadContent uploads raw content to the service at the given path.
+// The contentType is sent as the request Content-Type and path is sent in the X-RPC-Path header.
+func (c *Client) UploadContent(ctx context.Context, path string, contentType string, body []byte) error {
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/%s", c.endpoint, "v1/content.upload"), bytes.NewReader(body))
+	if err != nil {
+		return duh.NewClientError("", err, nil)
+	}
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("X-RPC-Path", path)
+	return c.Do(r, &v1.Reply{})
+}
+
+// DownloadContent downloads content from the service at the given path.
+// Returns the response headers (including Content-Type) and any error.
+// The body is written into the caller-provided buf.
+func (c *Client) DownloadContent(ctx context.Context, path string, buf *bytes.Buffer) (http.Header, error) {
+	payload, err := json.Marshal(&ContentDownloadRequest{Path: path})
+	if err != nil {
+		return nil, duh.NewClientError("while marshaling request payload: %w", err, nil)
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/%s", c.endpoint, "v1/content.download"), bytes.NewReader(payload))
+	if err != nil {
+		return nil, duh.NewClientError("", err, nil)
+	}
+	r.Header.Set("Content-Type", duh.ContentTypeJSON)
+	return c.DoContent(ctx, r, buf)
 }
 
 // RenderPixel sends a request to the service which calculates the pixel color of a Mandelbrot
