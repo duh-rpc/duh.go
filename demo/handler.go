@@ -101,9 +101,7 @@ func (h *Handler) listEvents(r *http.Request, stream duh.StreamWriter) error {
 }
 
 func (h *Handler) handleDownloadBytes(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", duh.ContentOctetStream)
-	w.WriteHeader(duh.CodeOK)
-	_, _ = w.Write([]byte("hello, bytes"))
+	duh.WriteContent(w, duh.ContentOctetStream, []byte("hello, bytes"))
 }
 
 func (h *Handler) handleRenderPixel(w http.ResponseWriter, r *http.Request) {
