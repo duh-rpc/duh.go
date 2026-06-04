@@ -75,14 +75,23 @@ See the [DUH-RPC CLI](https://github.com/duh-rpc/duh-cli) repo for complete docu
 > NOTE: You don't need the CLI to follow the RPC style. The CLI is just a convenient way to generate
 > boilerplate code and documentation.
 
-## Why not GRPC?
-GRPC has consistent semantics like flow control, request cancellation, and error handling. However, it is
-not without its own issues.
-* GRPC requires a generated client for every language — adding a new language means regenerating and distributing clients, whereas HTTP clients are available everywhere out of the box.
-* GRPC implementations can be slower than expected in a few situations (Slower than standard HTTP!)
-* GRPC is not suitable for public web-based APIs
+## Why not gRPC?
+gRPC is solid engineering, but if you're a SaaS or b2b company serving customers and partner vendors,
+a few of its assumptions cost more than they return.
 
-For a deeper dive and benchmarks of GRPC vs standard HTTP in golang, see [Why not GRPC](docs/why-not-grpc.md).
+* gRPC wasn't built for the browser. Reaching it from a web page means gRPC-Web and a translating
+  proxy, an extra moving part a plain HTTP API never needs.
+* Adopting gRPC internally usually means running two transports, gRPC inside and HTTP at the edge,
+  since anything public reaches for HTTP anyway. Standardize on HTTP and one stack serves both.
+* gRPC is a framework you adopt, not a protocol you call. Every language needs a generated client,
+  channels carry a connection lifecycle, and fine control takes boilerplate. Moving Gubernator off
+  gRPC removed around 2,000 lines of it.
+* Apples to apples, with the same serialization on both sides, the framework adds overhead a plain
+  HTTP request avoids. See the [benchmarks](https://github.com/duh-rpc/duh-benchmarks.go).
+* Protobuf is separable from gRPC. You can keep protobuf and drop the framework.
+
+For the full argument and benchmarks of gRPC versus standard HTTP in Go, see
+[Why not gRPC](docs/why-not-grpc.md).
 
 ## Why not REST?
 Many who embrace RPC-style frameworks do so because they are fleeing REST due to the simple semantics
