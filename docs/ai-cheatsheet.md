@@ -218,7 +218,7 @@ These constraints ensure schemas can be represented as protobuf messages:
 | `additionalProperties` MUST have explicit value type | Protobuf maps need typed keys and values |
 | No `allOf` | No protobuf equivalent |
 | No `anyOf` | Ambiguous typing, no protobuf equivalent |
-| `oneOf` only with discriminator + mapping | Bare `oneOf` is not permitted |
+| `oneOf` only as a nested key-tagged union (one optional `$ref` property per variant + `oneOf` of single-`required` branches, no discriminator) | Maps to a protobuf `oneof`; the flat/discriminated `oneOf` is not permitted |
 
 ## Streaming
 

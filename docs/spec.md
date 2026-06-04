@@ -356,21 +356,33 @@ Protobuf maps require explicit key and value types. When using `additionalProper
 ### No allOf or anyOf
 `allOf` has no equivalent in protobuf and MUST NOT be used. `anyOf` introduces ambiguous typing that cannot be represented in protobuf and MUST NOT be used.
 
-### oneOf — Discriminated Unions Only
-`oneOf` is permitted only when used as a discriminated union — that is, every variant schema MUST include a
-discriminator object with a mapping. The discriminator property name is up to the implementor. Bare `oneOf` without a discriminator is not permitted.
+### oneOf — Nested Key-Tagged Unions Only
+`oneOf` is permitted only as a nested, key-tagged union: an object with one optional `$ref` property per
+variant plus a `oneOf` of single-`required` branches and **no `discriminator`**. The present key names the
+variant and its payload nests beneath it (`{"cat_event": {"pet_name": "Whiskers"}}`). This is the one form
+that serializes identically on both the JSON and protobuf wires, because it maps directly to a protobuf
+`oneof`. See ADR-0002.
 
-Example of a valid discriminated union:
+Example of a valid nested union:
 ```yaml
-oneOf:
-  - $ref: '#/components/schemas/CatEvent'
-  - $ref: '#/components/schemas/DogEvent'
-discriminator:
-  propertyName: eventType
-  mapping:
-    cat: '#/components/schemas/CatEvent'
-    dog: '#/components/schemas/DogEvent'
+Event:
+  type: object
+  properties:
+    cat_event:
+      $ref: '#/components/schemas/Cat'
+    dog_event:
+      $ref: '#/components/schemas/Dog'
+  oneOf:
+    - required: [cat_event]
+    - required: [dog_event]
 ```
+
+The **discriminated/flat `oneOf`** — a top-level `oneOf` of `$ref`/inline variants plus a `discriminator` —
+is **NOT permitted**. It hoists the selected variant's fields to the top level and tags them by value
+(`{"eventType": "cat", "pet_name": "Whiskers"}`), a shape no protobuf serialization can produce.
+
+Each variant branch MUST name exactly one declared property, and that property MUST NOT be an array
+(proto3 forbids a `repeated` field inside a `oneof`).
 
 ## Content Endpoints
 
