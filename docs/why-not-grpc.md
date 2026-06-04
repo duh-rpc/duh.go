@@ -34,6 +34,19 @@ because gRPC carried more than they needed. When we moved Gubernator from gRPC t
 removed around 2,000 lines of code, some of it written only to manage the connection lifecycle and
 graceful shutdown.
 
+### The framework decides before you do
+
+Some requirements don't fit the shape gRPC chose for you, and you find out only when one arrives. Try
+to upload a multi-megabyte file. You can marshal it into a single protobuf message and fight the
+message-size limits and the memory it takes to hold the whole thing, or you can reach for gRPC
+streaming and take on a second programming model just to move some bytes. Either way the framework
+decided your options before the requirement existed.
+
+Plain HTTP already carries opaque bytes. DUH-RPC keeps structured calls in protobuf or JSON and lets
+unstructured data ride as a content endpoint, where uploading a file is just a POST of the file. The
+transport never forces the shape of your data, so a requirement you didn't foresee doesn't cost you a
+second protocol.
+
 ### Apples to apples
 
 Compare like for like, the same serialization on both sides, and the framework shows up in the

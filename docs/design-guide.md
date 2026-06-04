@@ -1,5 +1,5 @@
 # Design Guide
-This is the DUH-RPC design guide, while not appart of the specification. provides additional guidance on best 
+This is the DUH-RPC design guide. While not a part of the specification, it provides additional guidance on best
 practices to follow when implementing your own DUH-RPC endpoints.
 
 ## Pagination
@@ -18,7 +18,7 @@ For deeper understanding of pagination patterns and advanced use cases like bidi
 
 **Cursors** are opaque strings representing a position in a dataset. They should be base64-encoded and contain implementation details (like offset, ID, or timestamp) that clients should never parse. This opacity allows backend implementation changes without breaking clients.
 
-**PageInfo** is a message containing pagination metadata: `has_next_page` indicates whether more results exist, and `next_cursor` provides the cursor to fetch the next page.
+**PageInfo** is a message containing pagination metadata. `has_next_page` indicates whether more results exist, and `next_cursor` provides the cursor to fetch the next page.
 
 **Edges** (optional) are wrappers containing both a cursor and a node (the actual item). Use edges when you need per-item cursors or relationship-specific metadata.
 
@@ -124,8 +124,8 @@ message ListUsersResponse {
 ### Response Structure Reference
 
 **When to use each pattern:**
-- **Simple pattern**: Use for standard list endpoints where you only need forward pagination
-- **Connection pattern**: Use when you need per-item cursors or edge-specific metadata (e.g., friendship timestamps in social graphs)
+- **Simple pattern** for standard list endpoints where you only need forward pagination
+- **Connection pattern** when you need per-item cursors or edge-specific metadata (e.g., friendship timestamps in social graphs)
 
 **Required fields:**
 - `page_info` is required for all paginated responses
@@ -144,8 +144,8 @@ message ListUsersResponse {
 ```
 
 **Error handling:**
-- Invalid cursor: Return `400 Bad Request` with message "invalid cursor"
-- Expired cursor: Return `400 Bad Request` with message "cursor expired"
+- Invalid cursor returns `400 Bad Request` with message "invalid cursor"
+- Expired cursor returns `400 Bad Request` with message "cursor expired"
 - Use standard DUH-RPC error codes and Reply structure
 
 ### Iterator Generation Criteria
@@ -155,8 +155,8 @@ message ListUsersResponse {
 The `duh generate http` tool will automatically generate client-side iterators when a response schema contains **all** of the following:
 
 1. **A repeated field** (array of items)
-2. **At least one pagination position field**: `cursor`, `pivot`, `page`, `offset`, `has_next_page`
-3. **At least one size limit field**: `limit`, `first`, `last`
+2. **At least one pagination position field** (`cursor`, `pivot`, `page`, `offset`, `has_next_page`)
+3. **At least one size limit field** (`limit`, `first`, `last`)
 
 #### Examples that WILL generate iterators
 
@@ -221,10 +221,10 @@ message ListUsersRequest {
 **Detected Pagination Types:**
 
 The tool detects multiple pagination patterns for backward compatibility:
-- **Cursor-based**: `cursor` + `limit` (recommended and documented here)
-- **Offset-based**: `offset` + `limit` (detected but not recommended)
-- **Page-based**: `page` + `limit` (detected but not recommended)
-- **GraphQL-style**: `has_next_page` + `first`/`last` (detected)
+- **Cursor-based** uses `cursor` + `limit` (recommended and documented here)
+- **Offset-based** uses `offset` + `limit` (detected but not recommended)
+- **Page-based** uses `page` + `limit` (detected but not recommended)
+- **GraphQL-style** uses `has_next_page` + `first`/`last` (detected)
 
 All generated iterators use the same interface regardless of underlying type.
 
@@ -301,9 +301,9 @@ for iter.HasNext() {
 #### Internal Behavior
 
 Iterators track pagination state internally based on detected type:
-- **Cursor-based**: Tracks `next_cursor` from `page_info`, sends in `cursor` field of next request
-- **Offset-based**: Increments offset counter, sends in `offset` field
-- **Page-based**: Increments page counter, sends in `page` field
+- **Cursor-based** tracks `next_cursor` from `page_info`, sends in `cursor` field of next request
+- **Offset-based** increments offset counter, sends in `offset` field
+- **Page-based** increments page counter, sends in `page` field
 
 The same Next()/HasNext() interface works for all pagination types, providing a consistent developer experience.
 

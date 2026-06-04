@@ -1,16 +1,18 @@
 # The DUH Spec V2
 Here we are presenting a general protocol approach to implementing RPC over HTTP. The benefit of using tried-and-true nature of HTTP for RPC allows designers to leverage the many tools and frameworks readily available to design, document, and implement high-performance HTTP APIs without overly complex client or deployment strategies.
 
-When using plain HTTP, a `404 Not Found` could mean a load balancer, API gateway, or proxy couldn't find your service at all — or it could mean your service couldn't find the requested resource. To the client, both look identical. DUH-RPC solves this with two signals: the **`X-DUH-Version` header** on every service response, and the **Reply structure** in error response bodies. If a response includes `X-DUH-Version`, it came from the service. If it does not, it came from infrastructure. This distinction drives how clients interpret errors and whether they should retry.
+The closest existing approach is [Connect](https://connectrpc.com), which also uses POST-based, human-readable RPC over HTTP with protobuf or JSON. DUH-RPC differs in two ways. Connect ships as a framework with a gRPC and gRPC-Web compatibility layer, where DUH-RPC is a convention over plain HTTP with no runtime to adopt. And like gRPC, Connect has no first-class path for unstructured upload and download; DUH-RPC's [content endpoints](#content-endpoints) carry opaque bytes in their native MIME type without a wrapping message.
+
+When using plain HTTP, a `404 Not Found` could mean a load balancer, API gateway, or proxy couldn't find your service at all; or it could mean your service couldn't find the requested resource. To the client, both look identical. DUH-RPC solves this with two signals: the **`X-DUH-Version` header** on every service response, and the **Reply structure** in error response bodies. If a response includes `X-DUH-Version`, it came from the service. If it does not, it came from infrastructure. This distinction drives how clients interpret errors and whether they should retry.
 
 The server MUST include the `X-DUH-Version` header on every response, including 200, 4xx, and 5xx. The value is the DUH-RPC spec version the service implements (e.g. `X-DUH-Version: 2.0`). Unlike the `Server` header, custom headers are not scrubbed by proxies, making this a reliable signal.
 
 DUH method calls take the form `/v1/problem-domain/subject.method`
 
-The `problem-domain` segment is an optional namespace for grouping related endpoints. Use it when endpoints need organizational separation (e.g., `/v1/billing/invoices.list`, `/v1/identity/sessions.create`). Nesting is permitted. There is no enforcement — it is purely organizational and may span multiple services or API documents.
+The `problem-domain` segment is an optional namespace for grouping related endpoints. Use it when endpoints need organizational separation (e.g., `/v1/billing/invoices.list`, `/v1/identity/sessions.create`). Nesting is permitted. There is no enforcement; it is purely organizational and may span multiple services or API documents.
 
 ### Requests
-All requests SHOULD use the POST verb with an in body request object describing the arguments of the RPC request. Because each request includes a payload in the encoding of your choice (Default to JSON) there is no need to use  any other HTTP verb other than POST.
+All requests SHOULD use the POST verb with an in body request object describing the arguments of the RPC request. Because each request includes a payload in the encoding of your choice (default to JSON) there is no need to use any HTTP verb other than POST.
 
 > In fact, if you attempt to send a payload using verbs like GET, You will find that some language frameworks assume 
 > there is no payload on GET and will not allow you to read the payload.
@@ -21,7 +23,7 @@ The name of the RPC method should be in the standard HTTP path such that it can 
 
 The client MUST always send a request body, even for methods that define no parameters. For JSON, this means sending `{}`. For Protobuf, a zero-byte body is acceptable, as an empty message unmarshals cleanly.
 
-The server MUST always read the request body, regardless of whether it is empty. For structured endpoints, this means unmarshaling into the request schema; an empty JSON body (`{}`) or zero-byte protobuf body unmarshals cleanly into an empty message. For content endpoints, this means reading the raw bytes. This keeps server-side handling unconditional — no nil-check or missing-body branch is required, and the unmarshalling overhead for an empty message is negligible.
+The server MUST always read the request body, regardless of whether it is empty. For structured endpoints, this means unmarshaling into the request schema; an empty JSON body (`{}`) or zero-byte protobuf body unmarshals cleanly into an empty message. For content endpoints, this means reading the raw bytes. This keeps server-side handling unconditional; no nil-check or missing-body branch is required, and the unmarshalling overhead for an empty message is negligible.
 
 CRUD Examples
 * `/v1/users.create`
@@ -40,27 +42,27 @@ If Methods do not act upon a collection, then you should indicate the subject th
 
 Naming it `/v1/kiss.give` instead of just `/v1/kiss` is an important future proofing action. In case you want to add other methods to `/v1/kiss`, you have a consistent API. For instance if you only had `/v1/kiss` then when you  wanted to add the ability to `blow` a kiss, your api would look like
 
-* `/v1/kiss` - Create a Kiss
-* `/v1/kiss.blow` - Blow a Kiss
+* `/v1/kiss` (Create a Kiss)
+* `/v1/kiss.blow` (Blow a Kiss)
 
 Instead of the more consistent
-* `/v1/kiss.give` - Give a Kiss
-* `/v1/kiss.blow` - Blow a Kiss
+* `/v1/kiss.give` (Give a Kiss)
+* `/v1/kiss.blow` (Blow a Kiss)
 
 ### Subject before Noun or Action
 You may have noticed that every endpoint has the subject before the action. This is intentional and is useful for  future proofing your API when you add more actions in the future. Just remember, if in doubt, design your API like Yoda would speak.
 
 ### Versioning
-DUH-RPC calls employ standard HTTP paths to make RPC calls. This approach makes versioning those methods easy and direct. This spec does NOT have an opinion on the versioning semantic used. IE: `v1` or `V1` or `v1.2.1`. It is highly recommended that all methods are versioned in some way.
+DUH-RPC calls employ standard HTTP paths to make RPC calls. This approach makes versioning those methods easy and direct. This spec does NOT have an opinion on the versioning semantic used, e.g. `v1`, `V1`, or `v1.2.1`. It is highly recommended that all methods are versioned in some way.
 
 ## Content Negotiation
 This spec defines support for only the following mime types which can be specified in the `Content-Type` or `Accept`  headers. However, since this is HTTP, service Implementors are free to add support for whatever mime type they want.
 
-* `application/json` - This MUST be used when sending or receiving JSON. The charset MUST be UTF-8
-* `application/protobuf` - This MUST be used when sending or receiving Protobuf. The charset MUST be ascii
-* `application/octet-stream` - This MUST be used when sending or receiving unstructured binary data. The charset is undefined. The client/server should receive and store the binary data in its unmodified form.
-* `application/duh-stream+json` - This MUST be used when sending or receiving a structured server-to-client stream with JSON encoded payloads. See [streaming.md](streaming.md).
-* `application/duh-stream+protobuf` - This MUST be used when sending or receiving a structured server-to-client stream with Protobuf encoded payloads. See [streaming.md](streaming.md).
+* `application/json` MUST be used when sending or receiving JSON. The charset MUST be UTF-8
+* `application/protobuf` MUST be used when sending or receiving Protobuf. The charset MUST be ascii
+* `application/octet-stream` MUST be used when sending or receiving unstructured binary data. The charset is undefined. The client/server should receive and store the binary data in its unmodified form.
+* `application/duh-stream+json` MUST be used when sending or receiving a structured server-to-client stream with JSON encoded payloads. See [streaming.md](streaming.md).
+* `application/duh-stream+protobuf` MUST be used when sending or receiving a structured server-to-client stream with Protobuf encoded payloads. See [streaming.md](streaming.md).
 > The service implementation MUST always return the content type of the response.
 
 > These content types are used by structured endpoints. Content endpoints, where the request or response body is opaque content, use the content's own MIME type. The JSON fallback rule ("server MUST ALWAYS support JSON") applies to structured and error responses, not to the content body of a content endpoint. See [Content Endpoints](#content-endpoints).
@@ -99,14 +101,14 @@ Standard replies from the service SHOULD follow a common structure. This provide
 #### Reply Structure
 The reply structure has the following fields.
 
-* **Code** (Optional) — An application-level signal controlled by the implementor. It MAY be a numeric string
+* **Code** (Optional). An application-level signal controlled by the implementor. It MAY be a numeric string
   (e.g. `"400"`, `"453"`) or a semantic string meaningful to the application (e.g. `"CARD_DECLINED"`,
-  `"RATE_LIMITED"`). The HTTP status code is the authoritative signal for retry and routing decisions — client
+  `"RATE_LIMITED"`). The HTTP status code is the authoritative signal for retry and routing decisions; client
   implementations MUST base retry logic on the HTTP status code, not the `code` field.
-* **Message** (Optional) — A human readable message.
-* **Details** (Optional) — A map of string key/value pairs providing additional context about this error, which could include a link to documentation explaining the error or additional machine-readable codes.
+* **Message** (Optional). A human readable message.
+* **Details** (Optional). A map of string key/value pairs providing additional context about this error, which could include a link to documentation explaining the error or additional machine-readable codes.
 
-All fields are optional. A Reply MAY contain only `code`, only `message`, only `details`, or any combination. The presence of a well-formed Reply structure (even an empty one) is what distinguishes a service response from an infrastructure response — see [Infrastructure Errors](#infrastructure-errors).
+All fields are optional. A Reply MAY contain only `code`, only `message`, only `details`, or any combination. The presence of a well-formed Reply structure (even an empty one) is what distinguishes a service response from an infrastructure response; see [Infrastructure Errors](#infrastructure-errors).
 
 > Although the **Reply** structure is typically used for error replies, it CAN be used in normal `200` responses when there is a desire to avoid adding a new `<MethodCall>Response` type for simple method call which has no detailed responses.
 
@@ -137,12 +139,12 @@ the HTTP status code.
 ###### Service HTTP Codes
 When you break it down by what implementation is responsible for what HTTP code, it breaks down like this.
 
-Service Implementation - 200, 400, 404, 409, 453, 454, 500
-DUH-RPC Implementation - 455, 501
+Service Implementation (200, 400, 404, 409, 453, 454, 500)
+DUH-RPC Implementation (455, 501)
 
 > `452` is a client-side code synthesized by the client SDK. It is never received over the wire. See [Client-Side Codes](#client-side-codes).
-AuthZ/AuthN Implementation - 401, 403
-RateLimit Implementation - 429
+AuthZ/AuthN Implementation (401, 403)
+RateLimit Implementation (429)
 
 #### Errors and Codes
 HTTP Status Codes should NOT be expanded for your specific use case. Instead, server implementations should add their own custom fields and codes in the standard `v1.Reply.Details` map.
@@ -205,7 +207,7 @@ A client SDK SHOULD return `452` in the following scenarios:
 | Transport failure | `http.Client.Do()` failed before a response was received (e.g. DNS failure, connection refused, unsupported scheme). |
 | Response deserialization failure | The server returned `200` but the response body could not be unmarshalled. |
 
-The first three scenarios are deterministic local failures — retrying will produce the same result. The fourth is ambiguous: it may indicate a client/server schema mismatch or a server bug. Retry is still incorrect, but implementations SHOULD surface this case distinctly from the others so it can be investigated. A deserialization failure on a `200` is a signal to examine the server, not just fix the client.
+The first three scenarios are deterministic local failures; retrying will produce the same result. The fourth is ambiguous. It may indicate a client/server schema mismatch or a server bug. Retry is still incorrect, but implementations SHOULD surface this case distinctly from the others so it can be investigated. A deserialization failure on a `200` is a signal to examine the server, not just fix the client.
 
 **Retry: False** for all `452` scenarios.
 
@@ -291,7 +293,7 @@ The retryable status codes and the conditions under which a client should retry 
 
 A stream that disconnects before any frames are received is an infrastructure error. The same retry rules as unary requests apply.
 
-A stream that disconnects after one or more data frames, without a final or error frame, is also an infrastructure error. The client MAY retry from the beginning. Whether a full retry is safe depends on the idempotency of the stream endpoint — the same principle that applies to non-idempotent unary operations applies here. If the stream endpoint encodes sequence information in the payload, the client SHOULD pass the last received sequence value in the retry request so the server can resume from the correct position. See [streaming.md](streaming.md) for details on the sequence-in-payload pattern.
+A stream that disconnects after one or more data frames, without a final or error frame, is also an infrastructure error. The client MAY retry from the beginning. Whether a full retry is safe depends on the idempotency of the stream endpoint; the same principle that applies to non-idempotent unary operations applies here. If the stream endpoint encodes sequence information in the payload, the client SHOULD pass the last received sequence value in the retry request so the server can resume from the correct position. See [streaming.md](streaming.md) for details on the sequence-in-payload pattern.
 
 A stream that terminates with a final or error frame MUST NOT be retried. The stream ended intentionally.
 
@@ -356,8 +358,8 @@ Protobuf maps require explicit key and value types. When using `additionalProper
 ### No allOf or anyOf
 `allOf` has no equivalent in protobuf and MUST NOT be used. `anyOf` introduces ambiguous typing that cannot be represented in protobuf and MUST NOT be used.
 
-### oneOf — Nested Key-Tagged Unions Only
-`oneOf` is permitted only as a nested, key-tagged union: an object with one optional `$ref` property per
+### oneOf (Nested Key-Tagged Unions Only)
+`oneOf` is permitted only as a nested, key-tagged union. It is an object with one optional `$ref` property per
 variant plus a `oneOf` of single-`required` branches and **no `discriminator`**. The present key names the
 variant and its payload nests beneath it (`{"cat_event": {"pet_name": "Whiskers"}}`). This is the one form
 that serializes identically on both the JSON and protobuf wires, because it maps directly to a protobuf
@@ -377,7 +379,7 @@ Event:
     - required: [dog_event]
 ```
 
-The **discriminated/flat `oneOf`** — a top-level `oneOf` of `$ref`/inline variants plus a `discriminator` —
+The **discriminated/flat `oneOf`** (a top-level `oneOf` of `$ref`/inline variants plus a `discriminator`)
 is **NOT permitted**. It hoists the selected variant's fields to the top level and tags them by value
 (`{"eventType": "cat", "pet_name": "Whiskers"}`), a shape no protobuf serialization can produce.
 
@@ -512,7 +514,7 @@ Paginated responses MUST include the following structure:
 When `has_next_page` is `false`, the client SHOULD NOT make a further request. When `has_next_page` is `true` and `end_cursor` is present, the client MAY request the next page by passing `end_cursor` as `pagination.after`.
 
 ### Prohibited Pagination Patterns
-The following parameter names are prohibited as they imply offset-style pagination: `limit`, `offset`, and `page` as a standalone parameter name (i.e. a top-level integer page number). The `pagination` sub-object described above is the only permitted use of pagination parameters.
+The following parameter names imply offset-style pagination and are prohibited (`limit`, `offset`, and `page` as a standalone parameter name, i.e. a top-level integer page number). The `pagination` sub-object described above is the only permitted use of pagination parameters.
 
 ### Backwards Pagination
 Forward-only pagination (`first`/`after`) is the baseline requirement. Backwards pagination (`last`/`before`) MAY be added to an endpoint without violating this spec, provided the forward pagination fields under `pagination` remain present.
