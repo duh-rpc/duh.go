@@ -1,9 +1,9 @@
 # The DUH Spec V2
 Here we are presenting a general protocol approach to implementing RPC over HTTP. The benefit of using tried-and-true nature of HTTP for RPC allows designers to leverage the many tools and frameworks readily available to design, document, and implement high-performance HTTP APIs without overly complex client or deployment strategies.
 
-When using plain HTTP, a `404 Not Found` could mean a load balancer, API gateway, or proxy couldn't find your service at all — or it could mean your service couldn't find the requested resource. To the client, both look identical. DUH-RPC solves this by using the **Reply structure** as the definitive signal: any response that includes a well-formed Reply body originated from the service; any response that doesn't is treated as infrastructure. This distinction drives how clients interpret errors and whether they should retry.
+When using plain HTTP, a `404 Not Found` could mean a load balancer, API gateway, or proxy couldn't find your service at all — or it could mean your service couldn't find the requested resource. To the client, both look identical. DUH-RPC solves this with two signals: the **`X-DUH-Version` header** on every service response, and the **Reply structure** in error response bodies. If a response includes `X-DUH-Version`, it came from the service. If it does not, it came from infrastructure. This distinction drives how clients interpret errors and whether they should retry.
 
-> The optional `Server: DUH-RPC/2.0` header can help identify service responses when the body isn't available (e.g., in logs), but it may be scrubbed by proxies and should not be relied upon programmatically.
+The server MUST include the `X-DUH-Version` header on every response, including 200, 4xx, and 5xx. The value is the DUH-RPC spec version the service implements (e.g. `X-DUH-Version: 2.0`). Unlike the `Server` header, custom headers are not scrubbed by proxies, making this a reliable signal.
 
 DUH method calls take the form `/v1/problem-domain/subject.method`
 
@@ -21,7 +21,7 @@ The name of the RPC method should be in the standard HTTP path such that it can 
 
 The client MUST always send a request body, even for methods that define no parameters. For JSON, this means sending `{}`. For Protobuf, a zero-byte body is acceptable, as an empty message unmarshals cleanly.
 
-The server MUST always attempt to unmarshal the request body regardless of whether it is empty. This keeps server-side handling unconditional — no nil-check or missing-body branch is required, and the unmarshalling overhead for an empty message is negligible.
+The server MUST always read the request body, regardless of whether it is empty. For structured endpoints, this means unmarshaling into the request schema; an empty JSON body (`{}`) or zero-byte protobuf body unmarshals cleanly into an empty message. For content endpoints, this means reading the raw bytes. This keeps server-side handling unconditional — no nil-check or missing-body branch is required, and the unmarshalling overhead for an empty message is negligible.
 
 CRUD Examples
 * `/v1/users.create`
@@ -61,9 +61,9 @@ This spec defines support for only the following mime types which can be specifi
 * `application/octet-stream` - This MUST be used when sending or receiving unstructured binary data. The charset is undefined. The client/server should receive and store the binary data in its unmodified form.
 * `application/duh-stream+json` - This MUST be used when sending or receiving a structured server-to-client stream with JSON encoded payloads. See [streaming.md](streaming.md).
 * `application/duh-stream+protobuf` - This MUST be used when sending or receiving a structured server-to-client stream with Protobuf encoded payloads. See [streaming.md](streaming.md).
-* `text/plain` - This should NOT be returned by service implementations. If the response has this content type or has no content type, this indicates to the client the response is not from the service, but from the HTTP infra or some other part of the HTTP stack that is outside of the service implementations control.
+> The service implementation MUST always return the content type of the response.
 
-> The service implementation MUST always return the content type of the response. It MUST NOT return `text/plain`.
+> These content types are used by structured endpoints. Content endpoints, where the request or response body is opaque content, use the content's own MIME type. The JSON fallback rule ("server MUST ALWAYS support JSON") applies to structured and error responses, not to the content body of a content endpoint. See [Content Endpoints](#content-endpoints).
 
 #### Content-Type and Accept Headers
 Clients SHOULD NOT specify any mime type parameters as specified in RFC2046.  Any parameters after `;` in the provided content type CAN be ignored by the server.
@@ -78,10 +78,12 @@ Content-Type: <MIME_type>/<MIME_subtype>
 > provided, the server will ignore any mime type beyond the first provided or may optionally ignore the Content-Type completely and return JSON. 
 >
 > Implementations that add new mime types are encouraged to also follow this rule as it simplifies client  and server implementations as the RFC style of negotiation is unnecessary within the scope of RPC.
+>
+> The no-parameters rule applies to structured endpoints. Content endpoints MAY use fully qualified MIME types with parameters (e.g. `text/html; charset=utf-8`) as the content's own MIME type may require them. DUH-RPC passes these through to the implementation without interpretation. See [Content Endpoints](#content-endpoints).
 
 The mime types supported can change depending on the method. This allows service implementations to migrate from older  mime types or to support mime types of a specific use case.
 
-If the server can accommodate none of the mime types, the server WILL return HTTP status code `400` and a standard reply structure with the message  
+If the server can accommodate none of the mime types, the server WILL return HTTP status code `455` and a standard reply structure with the message  
 ```
 Accept header 'application/bson' is invalid format or unrecognized content type, only 
 [application/json, application/protobuf] are supported by this method
@@ -208,32 +210,25 @@ The first three scenarios are deterministic local failures — retrying will pro
 **Retry: False** for all `452` scenarios.
 
 #### Handling HTTP Errors
-All Server responses MUST ALWAYS return JSON if no other content type is specified. The server WILL NOT return `text/plain`.  This includes any and all router based errors like `Method Not Allowed` or `Not Found` if the route requested is not found. This is because ambiguity exists between a route not found on the service, and a `Not Found` route at the API gateway or Load Balancer.
+All Server responses MUST ALWAYS return JSON if no other content type is specified. Content endpoints return the content's own MIME type on 200; error responses follow the existing Content Negotiation rules. See [Content Endpoints](#content-endpoints). This includes any and all router based errors like `Method Not Allowed` or `Not Found` if the route requested is not found. This is because ambiguity exists between a route not found on the service, and a `Not Found` route at the API gateway or Load Balancer.
 
-The server should always respond with a standard **Reply** structure which differentiates its responses from any infrastructure that lies between the service and the client.
-
-The Client SHOULD handle responses that do not include the **Reply** structure and differentiate those responses so as to clearly differentiate between a service `Not Found` replies and infrastructure `Not Found` responses. Implementations of the client SHOULD assume the response is from the infrastructure if it receives a reply that does  NOT conform to the **Reply** structure.
-
-For example, if the client implementation receives an HTTP status code of `404` and a status message of `Not Found` from the request, the client SHOULD assume the error is from the infrastructure and inform the caller in a way that is suitable for the language used.
+The server MUST include the `X-DUH-Version` header and a standard **Reply** structure on all error responses.
 
 ### Infrastructure Errors
-An infrastructure error is any HTTP response status code that is NOT 200 and DOES NOT include a `Reply` structure in the body. If the client receives a response code and it DOES NOT include a `Reply` structure in the expected serialization format, then the client MUST consider the response as an infrastructure error and handling it accordingly.
+An infrastructure error is any HTTP response that does NOT include the `X-DUH-Version` header **and** has an HTTP status code of 5xx or 404. These are the status codes that infrastructure components typically produce when a request fails to reach the service.
 
-Typically, infrastructure errors are 5XX class errors, but could also be 404 Not Found errors, or consist of 
-non-standard or future HTTP status codes. As such it is recommended that client implementations do not attempt to handle all possible HTTP codes, but instead consider any non 200 responses without a `Reply` an infrastructure class
-error.
+A missing `X-DUH-Version` header on other status codes (e.g. 200, 400, 401, 403) indicates a non-conforming service, not an infrastructure error.
 
-A `404` is the most common example of this ambiguity. A service `404` — one that includes a Reply body — means the requested resource does not exist and should not be retried. An infrastructure `404` — one without a Reply body — means the request never reached the service and SHOULD be retried.
+The `X-DUH-Version` header check is a last-resort signal. Client implementations SHOULD first evaluate the HTTP status code, content type, and response body using the normal rules. Only when no other rule applies and the status code is 5xx or 404 should the client check for the absence of `X-DUH-Version` to classify the response as an infrastructure error.
 
-##### Service Identifiers
-In addition, the server CAN include the `Server: DUH-RPC/2.0 (Golang)` header according to [RFC9110](https://www.rfc-editor.org/rfc/rfc9110#field.server) to help identify the source of the HTTP Status. (It is possible that proxy or API gateways will scrub or overwrite this header as a security measure, which will make identification of the source more difficult) 
+A `404` is the most common example of this ambiguity. A service `404` includes the `X-DUH-Version` header and a Reply body, meaning the requested resource does not exist and should not be retried. An infrastructure `404` has no `X-DUH-Version` header, meaning the request never reached the service and SHOULD be retried.
 
 ## Retry Semantics
 
-A client SHOULD retry a request if the response meets either of the following conditions:
+A client SHOULD retry a request if the response meets any of the following conditions:
 
 - The HTTP status code is marked `Retry: True` in the status code table above.
-- The response does not include a Reply body — indicating the response originated from infrastructure rather than the service.
+- The response is an infrastructure error (see [Infrastructure Errors](#infrastructure-errors)).
 
 In both cases, the client SHOULD retry with backoff. The backoff strategy and maximum retry duration are left to the implementor.
 
@@ -376,6 +371,109 @@ discriminator:
     cat: '#/components/schemas/CatEvent'
     dog: '#/components/schemas/DogEvent'
 ```
+
+## Content Endpoints
+
+When the payload is the content (an HTML document, an image, a PDF) wrapping it in a JSON string field forces the client to escape every quote and newline in the document or encode as base64. Content endpoints let the client POST and receive content directly, in its native MIME type, without an intermediate serialization layer.
+
+A content endpoint is any endpoint where the request body, the response body, or both carry opaque content rather than a structured message.
+
+### Metadata Headers
+
+On structured endpoints, parameters go in the request body. On content endpoints the body is the content, so request parameters MUST be sent as HTTP headers.
+
+Metadata headers SHOULD use the `X-RPC-` prefix followed by the parameter name. Any header starting with `X-RPC-` is a parameter for the RPC call. Standard HTTP headers (`Content-Type`, `Content-Length`, `Authorization`) retain their normal meaning.
+
+The server MAY include `X-RPC-` headers in responses to return metadata about the operation (e.g. `X-RPC-Version`, `X-RPC-Hash`).
+
+```
+X-RPC-Path: /engineering/three-personas
+X-RPC-Author: agent-writer-01
+X-RPC-Format: html
+```
+
+The OpenAPI definition for the endpoint declares each metadata header as a parameter with `in: header`.
+
+### Requests
+
+`Content-Type` declares the content format. The client MUST send a body; the body is the content. The server reads it as raw bytes.
+
+```
+POST /v1/pages.upload HTTP/1.1
+Content-Type: text/html
+X-RPC-Path: /engineering/three-personas
+X-RPC-Author: agent-writer-01
+
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Three Personas</title></head>
+<body>...</body>
+</html>
+```
+
+> A content endpoint whose request body is structured (e.g. a download that takes a JSON query) follows the normal structured request rules for that body. Only the content body is treated as raw bytes.
+
+### Responses
+
+On 200, `Content-Type` declares the content format and the body is raw content. On non-200, the response MUST include a standard Reply body. A non-200 without a Reply is an infrastructure error, same as any other endpoint.
+
+Structured request, content response:
+```
+POST /v1/pages.download HTTP/1.1
+Content-Type: application/json
+
+{"path": "/engineering/three-personas"}
+```
+```
+HTTP/1.1 200 OK
+Content-Type: text/html
+X-Content-Type-Options: nosniff
+
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Three Personas</title></head>
+<body>...</body>
+</html>
+```
+
+Content request, structured response:
+```
+POST /v1/pages.upload HTTP/1.1
+Content-Type: text/html
+X-RPC-Path: /engineering/three-personas
+
+<!DOCTYPE html>
+...
+```
+```
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"path": "/engineering/three-personas", "size": 48230, "version": 3}
+```
+
+The request and response do not need to use the same content type. A content request MAY produce a structured response, and a structured request MAY produce a content response.
+
+### Errors
+
+Error responses MUST include a Reply body. The Reply encoding follows the existing Content Negotiation rules.
+
+```
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"code": "400", "message": "X-RPC-Path header is required"}
+```
+```
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{"code": "404", "message": "page not found: /engineering/three-personas"}
+```
+
+### Content Types
+
+The endpoint MUST define which content types it accepts and returns.
 
 ## Pagination
 

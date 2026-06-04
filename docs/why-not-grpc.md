@@ -1,56 +1,59 @@
-## Why not GPRC?
-While GRPC has several advantages, there are a few aspects that nudged us toward a using standard HTTP. Firstly, it
-demands a language-specific framework, with service definitions in Protobuf. This can deter broad adoption, especially
-for software as a service-based companies who wish to have customers use their APIs. Also, large interdepartmental
-or business units have to create and provide APIs for integration and operation of their respective units. A strict
-GRPC interface ecosystem is only viable within an organization which is completely committed to its adoption, and
-has accepted that there will be one-off standard HTTP endpoints for external customers.
+# Why not gRPC?
 
-### GRPC is not suitable for the Web
-As mentioned above, when adopting GRPC you accept that any public facing API's designed to be accessible via the WEB
-at scale cannot be GRPC. GRPC is mostly useful as an internal communication method to make calls between services.
+### gRPC wasn't built for the browser
 
-Much as been written about why GRPC is not suitable for the web, but the core rational is that GRPC uses sticky
-connections, and it prefers client side load balancing. Both of which make load balancing clients difficult by
-placing control in the hands of the client, not the API service provider.
+A browser can't make a native gRPC call. The HTTP/2 trailers gRPC depends on aren't exposed to
+browser JavaScript, so a web page reaches a gRPC backend through gRPC-Web, a separate protocol that a
+proxy translates to gRPC in front of the service. That's an extra moving part to deploy, secure, and
+reason about, and it's one a plain HTTP API never needs.
 
-* [GRPC Weaknesses via Microsoft](https://learn.microsoft.com/en-us/aspnet/core/grpc/comparison?view=aspnetcore-8.0#grpc-weaknesses)
-* [When to avoid GRPC via Redhat](https://www.redhat.com/architect/when-to-avoid-grpc)
-* [GRPC-Web requires a proxy](https://blog.envoyproxy.io/envoy-and-grpc-web-a-fresh-new-alternative-to-rest-6504ce7eb880)
-* [GRPC Load Balancing via Microsoft](https://learn.microsoft.com/en-us/aspnet/core/grpc/performance?view=aspnetcore-8.0#load-balancing)
+* [gRPC weaknesses (Microsoft)](https://learn.microsoft.com/en-us/aspnet/core/grpc/comparison?view=aspnetcore-8.0#grpc-weaknesses)
+* [When to avoid gRPC (Red Hat)](https://www.redhat.com/architect/when-to-avoid-grpc)
+* [gRPC-Web requires a proxy (Envoy)](https://blog.envoyproxy.io/envoy-and-grpc-web-a-fresh-new-alternative-to-rest-6504ce7eb880)
+* [gRPC load balancing (Microsoft)](https://learn.microsoft.com/en-us/aspnet/core/grpc/performance?view=aspnetcore-8.0#load-balancing)
 
-### GRPC is more complex than is necessary for high-performance, distributed environments.
-As you dive deeper into GRPC, you'll notice GRPC carries some baggage in the form of
-[deprecated systems and a somewhat bloated structure](https://www.storj.io/blog/introducing-drpc-our-replacement-for-grpc),
-which can leave users scratching their heads on what's best to use and how. The boiler plate code needed for fine
-control over GRPC compared to native HTTP can be much higher than you might expect as unlike most HTTP clients you
-have connection semantics, like connect and close. When switching Gubernator from GPRC to HTTP, we were able to 
-remove a total of 2,000 lines of code, some of which was written just to handle complex client shutdown.
+### One transport for internal and external
 
-### GRPC implementations can be slower than standard HTTP
-When performance suffers, it's not always clear why GPRC is doing what it's doing. For instance, we ran into a strange
-performance issue when using streaming which led us to discover that GRPC queue's requests once the concurrent number 
-of streams has been hit. (Our only recourse was to re-design the system with the knowledge of GPRCs nonsensical limitations.)
-(See [GRPC Docs](https://grpc.io/docs/guides/performance/))
+Because gRPC is awkward at the public edge, the moment you expose an API to customers or partner
+vendors you reach for HTTP anyway. Adopting gRPC for internal traffic therefore means committing to
+two transports at once, gRPC between your own services and HTTP at the edge. That's two client stacks
+to build, two sets of tooling to learn, and two mental models your team carries.
 
-With the proliferation of HTTP2, the gap of performance between GRPC and HTTP1 has been greatly and in many cases
-eclipsed by standard HTTP/2 implementation. Our own hands-on experiments showed that GRPC's heralded performance is
-not as great as is assumed to be, especially in high-concurrency, low-latency scenarios. In fact, the entire reason this
-spec exists is the realization, that our standard HTTP services were outperforming our GRPC based services.
+Standardize on HTTP and the same transport serves both. One stack, internal and external calls alike.
 
-See https://github.com/duh-rpc/duh-benchmarks.go for a comparison of DUH with GRPC in golang.
+### The framework is a commitment
 
-### GRPC and Service Mesh
-We used a service mesh at Mailgun that was incompatible with GRPC, so we had to use the client side load balancing and
-consul discovery via DNS. This worked, but was a one off in our normal environment, when diagnosing issues we had to 
-constantly remind ourselves that GRPC was different than how all our other services operated, and didn't show up on 
-any of our standard HTTP tooling. This is avoidable by using a GRPC compatible mesh, but is just one more cognitive
-load to add to your already complex system.
+gRPC is a framework you adopt, not a protocol you call. Every language needs a generated client
+before it can talk to your service, where an HTTP client ships with the standard library everywhere.
+Channels carry a connection lifecycle of their own, connect, close, and graceful shutdown, and fine
+control over a call takes more boilerplate than you would expect.
 
-### GRPC Gateway
-We naively thought that GRPC gateway would solve our compatibility and ..... (finish thought)
-TODO: Talk about the performance issues we have experienced using GRPC gateway.
-TODO: TLS connection to local gateway issue. (See Gubernator)
+This adds up. The people behind dRPC reached the same conclusion and
+[rebuilt a lighter replacement](https://www.storj.io/blog/introducing-drpc-our-replacement-for-grpc)
+because gRPC carried more than they needed. When we moved Gubernator from gRPC to plain HTTP we
+removed around 2,000 lines of code, some of it written only to manage the connection lifecycle and
+graceful shutdown.
 
-### GPRC is not Protobuf
-You can and should use Protobuf. You don't need to use GRPC to use Protobuf.
+### Apples to apples
+
+Compare like for like, the same serialization on both sides, and the framework shows up in the
+numbers. gRPC adds overhead that a plain HTTP request carrying the same protobuf does not. Compare
+JSON over REST instead and REST is the slower one, but that's the serialization talking, not the
+transport.
+
+The overhead isn't always where you'd look for it. We hit a wall on streaming once, and the cause
+turned out to be that gRPC queues calls once they reach the concurrent-stream limit on a connection,
+documented in the [gRPC performance guide](https://grpc.io/docs/guides/performance/). We had to
+redesign around the limit once we understood it.
+
+See the [DUH benchmarks](https://github.com/duh-rpc/duh-benchmarks.go) for a gRPC versus DUH
+comparison in Go.
+
+### You can use Protobuf without gRPC
+
+This is the part people conflate most often. Protobuf is a serialization format, and it stands on its
+own. You can and should use it without adopting gRPC.
+
+That's exactly what DUH-RPC does. It sends protobuf over plain HTTP, which makes it read as a
+constrained subset of REST in an RPC style. You keep the schema, the code generation, and the
+performance, and any HTTP client can still call your service.
