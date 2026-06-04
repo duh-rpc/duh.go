@@ -25,16 +25,16 @@ POST /v1/identity/sessions.create
 
 CRUD mapping:
 ```
-.create  — create a resource
-.get     — read a resource (no side effects)
-.update  — modify an existing resource
-.delete  — remove a resource
-.list    — paginated collection (see Pagination)
+.create  create a resource
+.get     read a resource (no side effects)
+.update  modify an existing resource
+.delete  remove a resource
+.list    paginated collection (see Pagination)
 ```
 
 ## Request Body
 
-- Client MUST always send a body. For JSON: `{}`. For Protobuf: empty bytes.
+- Client MUST always send a body. For JSON, send `{}`. For Protobuf, send empty bytes.
 - Server MUST always unmarshal the body unconditionally.
 
 ## Content Types
@@ -89,7 +89,7 @@ The HTTP status code is authoritative for retry and routing. The `code` field is
 | 500 | Internal Error | Yes | Service |
 | 501 | Not Implemented | No | DUH-RPC framework |
 
-When implementing a service endpoint, you will typically return: 200, 400, 404, 409, 453, 454, 500. Codes 455 and 501 are handled by the DUH-RPC framework. Codes 401, 403, and 429 are handled by auth/rate-limit middleware.
+When implementing a service endpoint, you will typically return 200, 400, 404, 409, 453, 454, 500. Codes 455 and 501 are handled by the DUH-RPC framework. Codes 401, 403, and 429 are handled by auth/rate-limit middleware.
 
 Do NOT invent new HTTP status codes. Use the `details` map for application-specific error codes.
 
@@ -101,10 +101,10 @@ An infrastructure error is a response that does NOT include the `X-DUH-Version` 
 
 | Has `X-DUH-Version`? | HTTP code | Origin | Action |
 |---|---|---|---|
-| Yes | 404 | Service — resource not found | Do not retry |
-| No | 404 | Infrastructure — service unreachable | Retry |
-| Yes | 500 | Service — internal error | Retry |
-| No | 502 | Infrastructure — gateway error | Retry |
+| Yes | 404 | Service (resource not found) | Do not retry |
+| No | 404 | Infrastructure (service unreachable) | Retry |
+| Yes | 500 | Service (internal error) | Retry |
+| No | 502 | Infrastructure (gateway error) | Retry |
 | No | 400 | Non-conforming service | Do not retry |
 
 The `X-DUH-Version` check is a last-resort signal. Evaluate the HTTP status code, content type, and response body first. Only check for the absence of `X-DUH-Version` on 5xx or 404 when no other rule applies.
@@ -164,7 +164,7 @@ A `429` without a Reply body is an infrastructure-level rate limit. Retry with b
 
 Cursor-based forward pagination only. No `limit`, `offset`, or `page` parameters.
 
-**Request** — nest under `pagination`:
+**Request** (nest under `pagination`):
 ```json
 {
   "pagination": {
@@ -203,7 +203,7 @@ An endpoint is paginated if its response has `items` + `pagination`. Actions lik
 ## Schema Rules
 
 - Every operation MUST have a dedicated request schema and a dedicated response schema. No sharing across operations.
-- Name schemas after their operation: `UserCreateRequest`, `UserCreateResponse`.
+- Name schemas after their operation, e.g. `UserCreateRequest`, `UserCreateResponse`.
 - No `readOnly` or `writeOnly` field annotations. Put fields in the correct schema instead.
 
 ### Protobuf Compatibility Constraints
@@ -235,7 +235,7 @@ All streaming endpoints use POST.
 ### Unstructured Streams (`application/octet-stream`)
 
 - Errors MUST be returned as a Reply **before** any bytes are sent. Once bytes flow, there is no way to inject a Reply.
-- A `200` with `Content-Type: application/octet-stream` means raw bytes — do NOT parse as Reply.
+- A `200` with `Content-Type: application/octet-stream` means raw bytes; do NOT parse as Reply.
 - Mid-stream disconnection is an infrastructure error. Client MAY retry from the beginning.
 - Resumable transfers supported via standard HTTP `Range` / `Content-Range` headers (optional).
 
@@ -243,7 +243,7 @@ All streaming endpoints use POST.
 
 A sequence of typed messages over a single HTTP response. One payload type per stream.
 
-**Wire format — length-prefix framing:**
+**Wire format (length-prefix framing):**
 ```
 [ 1 byte: flag ][ 4 bytes: uint32 big-endian length ][ N bytes: payload ]
 ```
