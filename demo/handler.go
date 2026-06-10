@@ -50,7 +50,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleRenderPixel(w, r)
 		return
 	case "/v1/events.list":
-		duh.HandleStream(w, r, h.listEvents)
+		duh.HandleStream(w, r, h.listEvents, nil)
 		return
 	case "/v1/bytes.download":
 		h.handleDownloadBytes(w, r)

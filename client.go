@@ -38,10 +38,17 @@ type Client struct {
 	// MaxFramePayload is the maximum payload size for streaming frames.
 	// 0 uses DefaultMaxFramePayload.
 	MaxFramePayload int
+	// HeartbeatTimeout is the maximum duration to wait between heartbeat frames
+	// before considering the stream dead. 0 uses DefaultHeartbeatTimeout.
+	// Negative values disable heartbeat enforcement.
+	HeartbeatTimeout time.Duration
 }
 
 // DefaultMaxFramePayload is the default maximum payload size for streaming frames.
 const DefaultMaxFramePayload = 4 * MegaByte
+
+// DefaultHeartbeatTimeout is the default maximum duration to wait between heartbeat frames.
+const DefaultHeartbeatTimeout = 60 * time.Second
 
 const (
 	DetailsHttpCode       = "http.code"
@@ -241,11 +248,17 @@ func (c *Client) DoStream(ctx context.Context, req *http.Request) (StreamReader,
 		maxPayload = DefaultMaxFramePayload
 	}
 
+	heartbeatTimeout := c.HeartbeatTimeout
+	if heartbeatTimeout == 0 {
+		heartbeatTimeout = DefaultHeartbeatTimeout
+	}
+
 	return &streamReader{
-		r:         stream.NewReader(resp.Body, maxPayload),
-		resp:      resp,
-		unmarshal: unmarshalFn,
-		cancel:    cancel,
+		r:                stream.NewReader(resp.Body, maxPayload),
+		resp:             resp,
+		unmarshal:        unmarshalFn,
+		cancel:           cancel,
+		heartbeatTimeout: heartbeatTimeout,
 	}, nil
 }
 

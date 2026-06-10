@@ -34,7 +34,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleTestErrors(w, r)
 		return
 	case "/v1/test.stream":
-		duh.HandleStream(w, r, h.handleTestStream)
+		duh.HandleStream(w, r, h.handleTestStream, nil)
 		return
 	}
 	duh.ReplyWithCode(w, r, duh.CodeNotImplemented, nil, "no such method; "+r.URL.Path)
