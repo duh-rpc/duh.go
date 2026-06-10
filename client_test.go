@@ -536,7 +536,7 @@ func TestVersionHeaderOnStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
 			return sw.Close(nil)
-		})
+		}, nil)
 	}))
 	defer server.Close()
 

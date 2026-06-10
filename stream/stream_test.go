@@ -86,6 +86,18 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	assert.Equal(t, large, payload)
 }
 
+func TestHeartbeatFrameRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	w := stream.NewWriter(&buf)
+	r := stream.NewReader(&buf, 0)
+
+	require.NoError(t, w.WriteFrame(stream.FlagHeartbeat, nil))
+	flag, payload, err := r.ReadFrame()
+	require.NoError(t, err)
+	assert.Equal(t, stream.FlagHeartbeat, flag)
+	assert.Nil(t, payload)
+}
+
 func TestReadFrameErrors(t *testing.T) {
 	for _, test := range []struct {
 		name    string

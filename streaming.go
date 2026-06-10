@@ -21,6 +21,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	v1 "github.com/duh-rpc/duh.go/v2/proto/v1"
 	"github.com/duh-rpc/duh.go/v2/stream"
@@ -46,17 +48,30 @@ type StreamWriter interface {
 var _ StreamWriter = (*streamWriter)(nil)
 
 type streamWriter struct {
+	mu      sync.Mutex
 	w       *stream.Writer
 	flusher http.Flusher
 	marshal func(proto.Message) ([]byte, error)
 	ctx     context.Context
 	closed  bool
+	stop    chan struct{}
+	stopped chan struct{}
 }
 
 // ErrStreamClosed is returned when Send or Close is called on a closed StreamWriter.
 var ErrStreamClosed = errors.New("stream is closed")
 
+var ErrHeartbeatTimeout = errors.New("stream heartbeat timeout: no frames received within deadline")
+
+type StreamConfig struct {
+	HeartbeatInterval time.Duration
+}
+
+const DefaultHeartbeatInterval = 30 * time.Second
+
 func (sw *streamWriter) Send(msg proto.Message) error {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
 	if sw.closed {
 		return ErrStreamClosed
 	}
@@ -74,6 +89,11 @@ func (sw *streamWriter) Send(msg proto.Message) error {
 }
 
 func (sw *streamWriter) Close(msg proto.Message) error {
+	close(sw.stop)
+	<-sw.stopped
+
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
 	if sw.closed {
 		return ErrStreamClosed
 	}
@@ -101,7 +121,7 @@ func (sw *streamWriter) Context() context.Context {
 
 // HandleStream validates the Accept header, asserts http.Flusher, constructs a
 // StreamWriter, calls the handler, and handles error frames on handler failure.
-func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Request, StreamWriter) error) {
+func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Request, StreamWriter) error, conf *StreamConfig) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		ReplyWithCode(w, r, CodeInternalError, nil, "response writer does not support streaming")
@@ -132,12 +152,50 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 		flusher: flusher,
 		marshal: marshalFn,
 		ctx:     r.Context(),
+		stop:    make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+
+	interval := DefaultHeartbeatInterval
+	if conf != nil && conf.HeartbeatInterval != 0 {
+		interval = conf.HeartbeatInterval
+	}
+
+	if interval > 0 {
+		go func() {
+			defer close(sw.stopped)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-sw.stop:
+					return
+				case <-ticker.C:
+					sw.mu.Lock()
+					if sw.closed {
+						sw.mu.Unlock()
+						return
+					}
+					_ = sw.w.WriteFrame(stream.FlagHeartbeat, nil)
+					sw.flusher.Flush()
+					sw.mu.Unlock()
+				}
+			}
+		}()
+	} else {
+		close(sw.stopped)
 	}
 
 	err := handler(r, sw)
 	if err == nil || sw.closed {
 		return
 	}
+
+	close(sw.stop)
+	<-sw.stopped
+
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
 
 	reply := buildErrorReply(err)
 	payload, marshalErr := sw.marshal(reply)
@@ -177,12 +235,13 @@ type StreamReader interface {
 var _ StreamReader = (*streamReader)(nil)
 
 type streamReader struct {
-	r          *stream.Reader
-	resp       *http.Response
-	unmarshal  func([]byte, proto.Message) error
-	cancel     context.CancelFunc
-	done       bool
-	hasPending bool
+	r                *stream.Reader
+	resp             *http.Response
+	unmarshal        func([]byte, proto.Message) error
+	cancel           context.CancelFunc
+	done             bool
+	hasPending       bool
+	heartbeatTimeout time.Duration
 }
 
 func (sr *streamReader) Recv(msg proto.Message) error {
@@ -190,61 +249,78 @@ func (sr *streamReader) Recv(msg proto.Message) error {
 		return io.EOF
 	}
 
-	// If a previous call read a final frame with payload, the payload was already
-	// unmarshalled. This call returns EOF to signal stream completion.
 	if sr.hasPending {
 		sr.hasPending = false
 		sr.done = true
 		return io.EOF
 	}
 
-	flag, payload, err := sr.r.ReadFrame()
-	if err != nil {
-		if err == io.EOF {
-			// Stream ended without a final or error frame -- infrastructure error per spec.
-			sr.done = true
-			return io.ErrUnexpectedEOF
+	for {
+		var timer *time.Timer
+		if sr.heartbeatTimeout > 0 {
+			timer = time.AfterFunc(sr.heartbeatTimeout, func() {
+				sr.cancel()
+			})
 		}
-		sr.done = true
-		return err
-	}
 
-	switch flag {
-	case stream.FlagData:
-		if err := sr.unmarshal(payload, msg); err != nil {
+		flag, payload, err := sr.r.ReadFrame()
+
+		if timer != nil {
+			timer.Stop()
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				sr.done = true
+				return io.ErrUnexpectedEOF
+			}
 			sr.done = true
+			if sr.heartbeatTimeout > 0 && sr.resp.Request != nil && sr.resp.Request.Context().Err() != nil {
+				return ErrHeartbeatTimeout
+			}
 			return err
 		}
-		return nil
 
-	case stream.FlagFinal:
-		if len(payload) > 0 {
+		switch flag {
+		case stream.FlagHeartbeat:
+			continue
+
+		case stream.FlagData:
 			if err := sr.unmarshal(payload, msg); err != nil {
 				sr.done = true
 				return err
 			}
-			sr.hasPending = true
 			return nil
-		}
-		sr.done = true
-		return io.EOF
 
-	case stream.FlagError:
-		sr.done = true
-		var reply v1.Reply
-		if err := sr.unmarshal(payload, &reply); err != nil {
-			return fmt.Errorf("while unmarshalling error frame: %w", err)
-		}
-		return &ClientError{
-			code:     reply.Code,
-			httpCode: sr.resp.StatusCode,
-			msg:      reply.Message,
-			details:  reply.Details,
-		}
+		case stream.FlagFinal:
+			if len(payload) > 0 {
+				if err := sr.unmarshal(payload, msg); err != nil {
+					sr.done = true
+					return err
+				}
+				sr.hasPending = true
+				return nil
+			}
+			sr.done = true
+			return io.EOF
 
-	default:
-		sr.done = true
-		return fmt.Errorf("unknown frame flag: 0x%x", flag)
+		case stream.FlagError:
+			sr.done = true
+			var reply v1.Reply
+			if err := sr.unmarshal(payload, &reply); err != nil {
+				return fmt.Errorf("while unmarshalling error frame: %w", err)
+			}
+			return &ClientError{
+				code:     reply.Code,
+				httpCode: sr.resp.StatusCode,
+				msg:      reply.Message,
+				details:  reply.Details,
+			}
+
+		default:
+			sr.done = true
+			return fmt.Errorf("unknown frame flag: 0x%x", flag)
+		}
 	}
 }
 

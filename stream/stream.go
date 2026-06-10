@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	FlagData  byte = 0x0
-	FlagFinal byte = 0x1
-	FlagError byte = 0x2
+	FlagData      byte = 0x0
+	FlagFinal     byte = 0x1
+	FlagError     byte = 0x2
+	FlagHeartbeat byte = 0x3
 )
 
 // headerSize is the size of a frame header: 1 byte flag + 4 bytes uint32 length.

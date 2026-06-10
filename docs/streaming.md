@@ -39,6 +39,7 @@ Every frame has one of three meanings:
 | Data frame | `0x0` |
 | Final frame | `0x1` |
 | Error frame | `0x2` |
+| Heartbeat frame | `0x3` |
 
 A **data frame** carries a single instance of the stream's payload type.
 
@@ -46,9 +47,11 @@ A **final frame** signals a clean end of stream. It MAY carry a payload of the s
 
 An **error frame** signals that the stream has terminated due to an error. Its payload is always a standard Reply structure, encoded in the stream's content type. After sending an error frame the server MUST close the stream. The client MUST NOT expect further frames.
 
-> The error frame is the one exception to the single payload type rule. It is distinguishable by its flag or event name, so there is no ambiguity.
+A **heartbeat frame** is a keep-alive signal sent by the server when the stream is idle. Its payload MUST be empty (length `0`), making it exactly 5 bytes on the wire: `[0x03][0x00][0x00][0x00][0x00]`. The handler never sends heartbeat frames directly; the framework sends them automatically. Clients MUST silently consume heartbeat frames — they MUST NOT be surfaced to application code.
 
-After a final or error frame, the stream is closed. Sending additional frames after either is a protocol violation.
+> The error frame and heartbeat frame are exceptions to the single payload type rule. They are distinguishable by their flag values, so there is no ambiguity.
+
+After a final or error frame, the stream is closed. Sending additional frames after either is a protocol violation. Heartbeat frames MUST NOT be sent after a final or error frame.
 
 #### Structured Streams
 Are made up of two different encodings, while using the same framing. (`application/duh-stream+json` and `application/duh-stream+protobuf`) Both content types use length-prefix framing. The payload encoding (JSON or Protobuf) is determined by the content type declared in the `Accept` header of the request. Each frame is structured as follows:
@@ -64,14 +67,54 @@ The flag byte values are:
 | `0x0` | Data frame |
 | `0x1` | Final frame |
 | `0x2` | Error frame |
+| `0x3` | Heartbeat frame |
 
-The length field specifies the byte length of the payload that follows. For a final frame with no payload, length MUST be `0`. For an error frame, the payload is a Reply structure encoded in the content type negotiated for the stream.
+The length field specifies the byte length of the payload that follows. For a final frame with no payload, length MUST be `0`. For an error frame, the payload is a Reply structure encoded in the content type negotiated for the stream. For a heartbeat frame, length MUST be `0`.
+
+Receivers that encounter an unknown flag value SHOULD skip the frame (read and discard the payload bytes indicated by the length field) rather than treating it as an error. This allows future flag values to be added without breaking existing clients.
 
 The `Content-Type` header on the response echoes the content type requested by the client in the `Accept` header, either `application/duh-stream+json` or `application/duh-stream+protobuf`. The client MUST use this value as the authoritative signal for how to decode frame payloads.
 
 > The JSON fallback rule from the general spec (where a server that cannot satisfy the requested content type falls back to `application/json`) does **not** apply to streaming endpoints. If the client requests `application/duh-stream+protobuf` and the server does not support it, the server MUST return a `400` with a standard Reply structure. A fallback to `application/duh-stream+json` is not permitted; the client has already committed to a binary encoding and cannot be expected to handle a different stream format.
 
 A mid-stream disconnection before a final or error frame is an infrastructure error. The client MAY retry from the beginning. Resumption from a specific frame is not supported; if your use case requires it, encode sequence information in your payload type.
+
+#### Heartbeats
+
+Structured streams support server-initiated heartbeats to keep idle connections alive through intermediaries (proxies, load balancers, firewalls) and to let clients detect half-open TCP connections.
+
+**Server behavior.** The server SHOULD send heartbeat frames at a regular interval when the stream is idle. The default interval is 30 seconds. The server MAY configure a different interval via `StreamConfig.HeartbeatInterval`. A negative interval disables heartbeats entirely; a zero value uses the default.
+
+Heartbeat frames are sent by a background goroutine that shares a mutex with `Send` and `Close`. A heartbeat frame never interleaves with a partially-written data, final, or error frame. When `Close` is called (or the handler returns an error), the heartbeat goroutine is stopped before the final or error frame is written.
+
+**Client behavior.** The client MUST silently consume heartbeat frames. When `Recv` encounters a heartbeat frame, it resets its internal deadline and reads the next frame — the caller never sees the heartbeat.
+
+If the client has a heartbeat timeout configured (default 60 seconds), it starts a timer before each `ReadFrame` call. If no frame of any kind arrives within the timeout, `Recv` returns `ErrHeartbeatTimeout` — a sentinel error distinct from `io.ErrUnexpectedEOF` and `io.EOF`. Every received frame (data, final, error, or heartbeat) resets the timeout clock. A negative timeout disables enforcement; a zero value uses the default.
+
+The heartbeat timeout SHOULD be at least 2× the server's heartbeat interval. The client has no protocol-level mechanism to discover the server's interval; the 2× convention is a safe default.
+
+A heartbeat frame on the wire:
+```
+// Heartbeat (5 bytes total, no payload)
+flag=0x3  length=0x00000000
+```
+
+Heartbeat frames interspersed with data frames — the client sees only the data frames:
+```
+// Frame 1: data
+flag=0x0  length=0x00000031
+{"sequence": 1, "userId": "abc", "action": "login"}
+
+// Heartbeat (invisible to client)
+flag=0x3  length=0x00000000
+
+// Frame 2: data
+flag=0x0  length=0x00000032
+{"sequence": 2, "userId": "def", "action": "logout"}
+
+// Final
+flag=0x1  length=0x00000000
+```
 
 A payload type with a sequence field looks like this:
 ```

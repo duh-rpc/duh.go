@@ -229,7 +229,7 @@ func TestStreamingSendAfterClose(t *testing.T) {
 			// Attempt to Send after Close -- should fail
 			sendErr <- sw.Send(&test.StreamItem{Sequence: 1, Data: "after-close"})
 			return nil
-		})
+		}, nil)
 	})
 
 	server := httptest.NewServer(handler)
@@ -319,7 +319,7 @@ func TestStreamingContextCancel(t *testing.T) {
 				}
 			}
 			return sw.Close(nil)
-		})
+		}, nil)
 	})
 
 	server := httptest.NewServer(handler)
@@ -649,6 +649,269 @@ func TestContentDownloadNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, duh.CodeNotFound, ce.HTTPCode())
 	assert.False(t, ce.IsInfraError())
+}
+
+func TestStreamHeartbeatKeepsAlive(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			for i := 0; i < 3; i++ {
+				if err := sw.Send(&test.StreamItem{Sequence: int64(i), Data: fmt.Sprintf("item-%d", i)}); err != nil {
+					return err
+				}
+				time.Sleep(80 * time.Millisecond)
+			}
+			return sw.Close(nil)
+		}, &duh.StreamConfig{HeartbeatInterval: 50 * time.Millisecond})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var items []*test.StreamItem
+	for {
+		var item test.StreamItem
+		err := sr.Recv(&item)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		items = append(items, &item)
+	}
+
+	require.Len(t, items, 3)
+	for i, item := range items {
+		assert.Equal(t, int64(i), item.Sequence)
+		assert.Equal(t, fmt.Sprintf("item-%d", i), item.Data)
+	}
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamHeartbeatDisabled(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			for i := 0; i < 3; i++ {
+				if err := sw.Send(&test.StreamItem{Sequence: int64(i), Data: fmt.Sprintf("item-%d", i)}); err != nil {
+					return err
+				}
+			}
+			return sw.Close(nil)
+		}, &duh.StreamConfig{HeartbeatInterval: -1})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var items []*test.StreamItem
+	for {
+		var item test.StreamItem
+		err := sr.Recv(&item)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		items = append(items, &item)
+	}
+
+	require.Len(t, items, 3)
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamHeartbeatTimeout(t *testing.T) {
+	unblock := make(chan struct{})
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", duh.ContentStreamJSON)
+		w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+		w.WriteHeader(http.StatusOK)
+
+		sw := stream.NewWriter(w)
+		payload, _ := json.Marshal(&test.StreamItem{Sequence: 0, Data: "first"})
+		_ = sw.WriteFrame(stream.FlagData, payload)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		// Block until test cleanup
+		<-unblock
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer close(unblock)
+
+	c := &duh.Client{Client: &http.Client{}, HeartbeatTimeout: 150 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+	assert.Equal(t, "first", item.Data)
+
+	err = sr.Recv(&item)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, duh.ErrHeartbeatTimeout))
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamHeartbeatTimeoutDisabled(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", duh.ContentStreamJSON)
+		w.Header().Set(duh.HeaderDUHVersion, duh.DUHVersion)
+		w.WriteHeader(http.StatusOK)
+
+		sw := stream.NewWriter(w)
+		payload, _ := json.Marshal(&test.StreamItem{Sequence: 0, Data: "only"})
+		_ = sw.WriteFrame(stream.FlagData, payload)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		time.Sleep(200 * time.Millisecond)
+		_ = sw.WriteFrame(stream.FlagFinal, nil)
+
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}, HeartbeatTimeout: -1}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+
+	err = sr.Recv(&item)
+	assert.Equal(t, io.EOF, err)
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamHeartbeatTimeoutResetByHeartbeat(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			time.Sleep(300 * time.Millisecond)
+			if err := sw.Send(&test.StreamItem{Sequence: 0, Data: "after-wait"}); err != nil {
+				return err
+			}
+			return sw.Close(nil)
+		}, &duh.StreamConfig{HeartbeatInterval: 50 * time.Millisecond})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}, HeartbeatTimeout: 150 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var item test.StreamItem
+	require.NoError(t, sr.Recv(&item))
+	assert.Equal(t, int64(0), item.Sequence)
+	assert.Equal(t, "after-wait", item.Data)
+
+	err = sr.Recv(&item)
+	assert.Equal(t, io.EOF, err)
+
+	require.NoError(t, sr.Close())
+}
+
+func TestStreamHeartbeatConcurrency(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleStream(w, r, func(r *http.Request, sw duh.StreamWriter) error {
+			for i := 0; i < 50; i++ {
+				if err := sw.Send(&test.StreamItem{Sequence: int64(i), Data: fmt.Sprintf("item-%d", i)}); err != nil {
+					return err
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			return sw.Close(nil)
+		}, &duh.StreamConfig{HeartbeatInterval: 10 * time.Millisecond})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	c := &duh.Client{Client: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/test.stream", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", duh.ContentStreamJSON)
+
+	sr, err := c.DoStream(ctx, req)
+	require.NoError(t, err)
+
+	var items []*test.StreamItem
+	for {
+		var item test.StreamItem
+		err := sr.Recv(&item)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		items = append(items, &item)
+	}
+
+	require.Len(t, items, 50)
+	for i, item := range items {
+		assert.Equal(t, int64(i), item.Sequence)
+	}
+
+	require.NoError(t, sr.Close())
 }
 
 // TODO: Update the benchmark tests
