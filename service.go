@@ -185,8 +185,9 @@ type BytesWriter interface {
 }
 
 // bytesWriter is the default BytesWriter. It defers the 200 status until the
-// first Write, flushing each write so bytes stream to the client as they are
-// produced.
+// first Write and, when the ResponseWriter supports it, flushes each write so
+// bytes stream to the client as they are produced. Flushing is best-effort: an
+// unflushable writer still produces a correct response, just buffered.
 type bytesWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
@@ -203,7 +204,7 @@ func (b *bytesWriter) Write(p []byte) (int, error) {
 		b.wrote = true
 	}
 	n, err := b.w.Write(p)
-	if b.flusher != nil {
+	if err == nil && b.flusher != nil {
 		b.flusher.Flush()
 	}
 	return n, err
