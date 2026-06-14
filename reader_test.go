@@ -62,13 +62,16 @@ func TestNewReader(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "exceeds 1.0MiB limit", err.Error())
 
+	// Drain with io.Copy to io.Discard rather than io.ReadAll. eternalReader avoids
+	// allocating the source bytes, but io.ReadAll would still accumulate every byte
+	// into a growing output slice (gigabytes) before the limit error fires.
 	r = duh.NewLimitReader(io.NopCloser(eternalReader{}), duh.Gigabyte)
-	_, err = io.ReadAll(r)
+	_, err = io.Copy(io.Discard, r)
 	require.Error(t, err)
 	assert.Equal(t, "exceeds 1.0GB limit", err.Error())
 
 	r = duh.NewLimitReader(io.NopCloser(eternalReader{}), duh.Gibibyte)
-	_, err = io.ReadAll(r)
+	_, err = io.Copy(io.Discard, r)
 	require.Error(t, err)
 	assert.Equal(t, "exceeds 1.0GiB limit", err.Error())
 }

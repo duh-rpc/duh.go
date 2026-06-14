@@ -144,8 +144,7 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 	}
 
 	w.Header().Set("Content-Type", accept)
-	w.Header().Set(HeaderDUHVersion, DUHVersion)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	setServiceHeaders(w)
 
 	sw := &streamWriter{
 		w:       stream.NewWriter(w),
