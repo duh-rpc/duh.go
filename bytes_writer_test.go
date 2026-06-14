@@ -48,6 +48,30 @@ func TestHandleBytesStreamsBody(t *testing.T) {
 	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
 }
 
+func TestHandleBytesEmptySuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duh.HandleBytes(w, r, func(r *http.Request, bw duh.BytesWriter) error {
+			// The handler succeeds without writing any bytes (e.g. an empty export).
+			return nil
+		})
+	}))
+	defer server.Close()
+
+	resp, err := http.Post(server.URL, "", nil)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	// A successful empty response still carries the standard service headers.
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, body)
+	assert.Equal(t, duh.ContentOctetStream, resp.Header.Get("Content-Type"))
+	assert.Equal(t, duh.DUHVersion, resp.Header.Get(duh.HeaderDUHVersion))
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+}
+
 func TestHandleBytesHandlerOverridesHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		duh.HandleBytes(w, r, func(r *http.Request, bw duh.BytesWriter) error {

@@ -184,9 +184,9 @@ type BytesWriter interface {
 	io.Writer
 }
 
-// bytesWriter is the default BytesWriter. It defers the 200 status and the
-// standard service headers until the first Write, flushing each write so bytes
-// stream to the client as they are produced.
+// bytesWriter is the default BytesWriter. It defers the 200 status until the
+// first Write, flushing each write so bytes stream to the client as they are
+// produced.
 type bytesWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
@@ -199,7 +199,6 @@ func (b *bytesWriter) Header() http.Header {
 
 func (b *bytesWriter) Write(p []byte) (int, error) {
 	if !b.wrote {
-		setServiceHeaders(b.w)
 		b.w.WriteHeader(CodeOK)
 		b.wrote = true
 	}
@@ -219,6 +218,7 @@ func (b *bytesWriter) Write(p []byte) (int, error) {
 // and the error can only abort the stream. See docs/streaming.md.
 func HandleBytes(w http.ResponseWriter, r *http.Request, handler func(*http.Request, BytesWriter) error) {
 	w.Header().Set("Content-Type", ContentOctetStream)
+	setServiceHeaders(w)
 	flusher, _ := w.(http.Flusher)
 	bw := &bytesWriter{w: w, flusher: flusher}
 	if err := handler(r, bw); err != nil && !bw.wrote {
