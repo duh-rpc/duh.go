@@ -235,9 +235,10 @@ func ReplyContentError(w http.ResponseWriter, r *http.Request, err error) {
 	ReplyError(w, r, err)
 }
 
-// setServiceHeaders sets the standard DUH service response headers.
-// Called by Reply and WriteContent to ensure all service responses
-// include the version header and content-type options.
+// setServiceHeaders sets the standard DUH service response headers so all
+// service responses include the version header and content-type options.
+// Called by every response writer: Reply, WriteContent, HandleBytes, and
+// HandleStream.
 func setServiceHeaders(w http.ResponseWriter) {
 	w.Header().Set(HeaderDUHVersion, DUHVersion)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
