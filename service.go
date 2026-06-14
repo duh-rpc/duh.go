@@ -172,6 +172,60 @@ func WriteContent(w http.ResponseWriter, contentType string, body []byte) {
 	_, _ = w.Write(body)
 }
 
+// BytesWriter is the server-side interface for writing an unstructured
+// (octet-stream) response body, the counterpart to the client's DoBytes and the
+// unstructured analogue of StreamWriter. A handler can set response headers
+// (including overriding the default Content-Type) and write body bytes, but it
+// cannot commit the status code: HandleBytes defers WriteHeader until the first
+// Write so a handler that fails before producing any output still yields a
+// standard error Reply. Set any headers before the first Write.
+type BytesWriter interface {
+	Header() http.Header
+	io.Writer
+}
+
+// bytesWriter is the default BytesWriter. It defers the 200 status and the
+// standard service headers until the first Write, flushing each write so bytes
+// stream to the client as they are produced.
+type bytesWriter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+	wrote   bool
+}
+
+func (b *bytesWriter) Header() http.Header {
+	return b.w.Header()
+}
+
+func (b *bytesWriter) Write(p []byte) (int, error) {
+	if !b.wrote {
+		setServiceHeaders(b.w)
+		b.w.WriteHeader(CodeOK)
+		b.wrote = true
+	}
+	n, err := b.w.Write(p)
+	if b.flusher != nil {
+		b.flusher.Flush()
+	}
+	return n, err
+}
+
+// HandleBytes writes an unstructured (octet-stream) response, the server-side
+// counterpart to the client's DoBytes and the unstructured analogue of
+// HandleStream. It seeds Content-Type: application/octet-stream (the handler MAY
+// override it via BytesWriter.Header() before the first Write), runs handler, and
+// — if the handler returns an error before any bytes were written — sends a
+// standard error Reply. Once bytes have been written the 200 response is committed
+// and the error can only abort the stream. See docs/streaming.md.
+func HandleBytes(w http.ResponseWriter, r *http.Request, handler func(*http.Request, BytesWriter) error) {
+	w.Header().Set("Content-Type", ContentOctetStream)
+	flusher, _ := w.(http.Flusher)
+	bw := &bytesWriter{w: w, flusher: flusher}
+	if err := handler(r, bw); err != nil && !bw.wrote {
+		ReplyError(w, r, err)
+	}
+}
+
 // ReplyContentError writes an error Reply for content endpoint errors.
 // It delegates to ReplyError so the Accept header is respected and the version header is set.
 // This function exists as a named entry point for content endpoint handlers, parallel to
