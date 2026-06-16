@@ -48,14 +48,27 @@ type StreamWriter interface {
 var _ StreamWriter = (*streamWriter)(nil)
 
 type streamWriter struct {
-	mu      sync.Mutex
-	w       *stream.Writer
-	flusher http.Flusher
-	marshal func(proto.Message) ([]byte, error)
-	ctx     context.Context
-	closed  bool
-	stop    chan struct{}
-	stopped chan struct{}
+	mu       sync.Mutex
+	w        *stream.Writer
+	flusher  http.Flusher
+	marshal  func(proto.Message) ([]byte, error)
+	ctx      context.Context
+	closed   bool
+	stop     chan struct{}
+	stopped  chan struct{}
+	stopOnce sync.Once
+}
+
+// stopHeartbeat signals the heartbeat goroutine to exit and waits for it to
+// finish, exactly once. Both Close and HandleStream's return path call this, so
+// the goroutine is always joined before HandleStream returns — a handler that
+// returns nil without calling Close can no longer leak it (and the leaked ticker
+// can no longer fire Flush on a finalized ResponseWriter).
+func (sw *streamWriter) stopHeartbeat() {
+	sw.stopOnce.Do(func() {
+		close(sw.stop)
+		<-sw.stopped
+	})
 }
 
 // ErrStreamClosed is returned when Send or Close is called on a closed StreamWriter.
@@ -89,8 +102,7 @@ func (sw *streamWriter) Send(msg proto.Message) error {
 }
 
 func (sw *streamWriter) Close(msg proto.Message) error {
-	close(sw.stop)
-	<-sw.stopped
+	sw.stopHeartbeat()
 
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
@@ -186,12 +198,16 @@ func HandleStream(w http.ResponseWriter, r *http.Request, handler func(*http.Req
 	}
 
 	err := handler(r, sw)
+
+	// Always join the heartbeat goroutine before returning. A handler may return
+	// without calling Close (e.g. returning nil on client disconnect), so this is
+	// the only guarantee the goroutine never outlives the request. Idempotent, so
+	// it is a no-op when the handler already called Close.
+	sw.stopHeartbeat()
+
 	if err == nil || sw.closed {
 		return
 	}
-
-	close(sw.stop)
-	<-sw.stopped
 
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
