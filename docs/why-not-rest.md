@@ -51,9 +51,9 @@ DUH-RPC keeps the path to a fixed `subject.method` that you control end to end, 
 
 See [Mastering RESTful Design](https://wippler.dev/posts/Mastering-RESTful-Design).
 
-### REST endpoints become method calls anyway
+### REST endpoints are just method calls
 
-Open the canonical Swagger pet store and generate a client from its OpenAPI spec. You don't get a tour of resources and verbs; you get a list of methods. `add_pet()`, `find_pets_by_status()`, `update_pet()`, `delete_pet()`. The paths and the HTTP verbs are gone, compiled away into function names.
+Open the canonical Swagger pet store and generate a client from its OpenAPI spec. The generated code gives you a list of methods. `add_pet()`, `find_pets_by_status()`, `update_pet()`, `delete_pet()`. The paths and the HTTP verbs are gone, compiled away into function names.
 
 That isn't the generator being lazy. It's the generator admitting what the API actually is. Nobody writes `http.PUT("/pet")` in application code; they call `update_pet()`, because the operation is the unit a developer thinks in, not the resource and not the verb.
 
